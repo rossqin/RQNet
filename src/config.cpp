@@ -60,6 +60,8 @@ AppConfig::AppConfig() {
 
 AppConfig::~AppConfig()
 {
+	if (dataset)
+		delete dataset;
 }
 
 bool AppConfig::Load(const char * filename, bool training) {

@@ -7,67 +7,49 @@
     <Filter Include="include">
       <UniqueIdentifier>{d079acb0-500a-4bf2-bf2a-d27c946ad6e2}</UniqueIdentifier>
     </Filter>
-    <Filter Include="gflags">
-      <UniqueIdentifier>{b76a168c-caf4-4581-bafb-903c21dbfe6c}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\tensor.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\utils.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\network.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\layer.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\config.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\tinyxml2.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\image.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\param_pool.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\inference_module.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
-    <ClCompile Include="src\yolo.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\box.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\config.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\data_loader.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="thirdparty\gflags\src\gflags.cc">
-      <Filter>gflags</Filter>
+    <ClCompile Include="src\image.cpp">
+      <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="thirdparty\gflags\src\gflags_completions.cc">
-      <Filter>gflags</Filter>
+    <ClCompile Include="src\inference_module.cpp">
+      <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="thirdparty\gflags\src\gflags_reporting.cc">
-      <Filter>gflags</Filter>
+    <ClCompile Include="src\layer.cpp">
+      <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="thirdparty\gflags\src\windows_port.cc">
-      <Filter>gflags</Filter>
+    <ClCompile Include="src\network.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\param_pool.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tensor.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tinyxml2.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\yolo.cpp">
+      <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\args.h">
-      <Filter>include</Filter>
-    </ClInclude>
     <ClInclude Include="include\tensor.h">
       <Filter>include</Filter>
     </ClInclude>
@@ -112,16 +94,16 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="src\tensor.cu">
+    <CudaCompile Include="src\activation.cu">
       <Filter>src</Filter>
     </CudaCompile>
     <CudaCompile Include="src\image.cu">
       <Filter>src</Filter>
     </CudaCompile>
-    <CudaCompile Include="src\activation.cu">
+    <CudaCompile Include="src\maxpool_patch.cu">
       <Filter>src</Filter>
     </CudaCompile>
-    <CudaCompile Include="src\maxpool_patch.cu">
+    <CudaCompile Include="src\tensor.cu">
       <Filter>src</Filter>
     </CudaCompile>
   </ItemGroup>

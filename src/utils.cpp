@@ -223,3 +223,28 @@ const char* replace_extension(string& str, const char* new_ext) {
 	str += new_ext;
 	return str.c_str();
 }
+/**
+* \brief This function show a help message
+*
+* Usage:
+*
+* RQNet train -d data-def.xml -n net-def.xml [-w weights.pb]
+* RQNet test -d data-def.xml -n net-def.xml -w weights.pb`
+* RQNet detect -n net-def.xml -w weights.pb -i image-to-detect.jpg
+* RQNet demo  -n net-def.xml -w weights.pb [-i video-to-detect.mp4]
+* RQNet wconv -c darknet-net-def.cfg -i darknet-weights.weights -o darknet
+*/
+void show_usage(const char* bin) {
+	cout << "\n\nUsage : " << bin << " train|test|detect|demo|wconv [options]\n\n  Options \n\n";
+	cout << "  To train a network:\n    " << bin << " train -d <path/to/data/defintions> -n <path/to/network/defintion> [-w <path/to/weights>]\n";
+	cout << "\n        weights file is .pb file. If weights file is not given, then a random set of weighs are initialized.\n\n\n";
+	cout << "  To test a network: \n    " << bin << " test  -d <path/to/data/defintions> -n <path/to/network/defintion> -w <path/to/weights>\n\n\n";
+	cout << "  To detect objects in image:\n    " << bin << " detect -n <path/to/network/defintion> -w <path/to/weights> -i <path/to/image>\n\n\n";
+	cout << "  To detect objects in video:\n    " << bin << " detect -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]\n";
+	cout << "\n       If input file is not given, then use a camera.\n\n\n";
+	cout << "  To convert .weights file to .pb files:\n    " << bin << " detect -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]\n\n\n";
+	cout << " *** ATTENSION ***\n\n";
+	cout << " This program is running only with CUDA support!\n\n";
+
+
+}

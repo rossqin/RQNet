@@ -205,8 +205,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 	if (!context.training) return true;
 
 	if (NULL == delta_cpu) {
-		delta_cpu = New float[output.MemElements()];
-		cout << "alloc " << output.MemElements() << " float elements for delta_cpu.\n";
+		delta_cpu = New float[output.MemElements()]; 
 	}
 	memset(delta_cpu, 0, output.MemBytes());
 	float cost = 0.0;
@@ -285,26 +284,28 @@ bool YoloModule::Forward(ForwardContext& context) {
 	GetNetwork().RegisterLoss(cost);
 	ostringstream oss;
 	avg_anyobj /= output.MemElements();
+	oss << "Layer<"<< layer->GetIndex() <<">: " << count << " objects." ;
 	if (count > 0) {
 		avg_iou /= count;
 		avg_obj /= count;
 		recall /= count;
 		recall75 /= count;
-		oss << "  Found " << count << " objects in detecting layer " << layer->GetIndex() << ".\n";
+		
 		if (class_count > 0) {
 			avg_cat /= class_count;			
-			oss << setprecision(4) << "   Avg IOU : " << avg_iou << ", Class : " << avg_cat << ", Obj : " << avg_obj;
-			oss << ", No Obj : "<< avg_anyobj <<", 50% Recall : "<< recall <<", 75% Recall : "<< recall75 <<"\n" ;
+			oss << setprecision(4) << "Avg IoU: " << avg_iou << ", cls: " << avg_cat << ", obj:" << avg_obj 
+			 << ", No Obj: "<< avg_anyobj <<",Recall: "<< recall <<"(50%), "<< recall75 <<"(75%).\n" ;
 		}
 		else {
-			oss << setprecision(4) << "   Avg IOU : " << avg_iou << ", Class : N.A. , Obj : " << avg_obj;
-			oss << ", No Obj : " << avg_anyobj << ", 50% Recall : " << recall << ", 75% Recall : " << recall75 << "\n";
+			oss << setprecision(4) << "Avg IoU: " << avg_iou << ", obj:" << avg_obj
+				<< ", No Obj: " << avg_anyobj << ",Recall: " << recall << "(50%), " << recall75 << "(75%).\n";
+			 
 			 
 		}
 		cout << oss.str();
 	}
 	else
-		cout << "  Found 0 objects in detecting layer "<<layer->GetIndex() <<".\n" ;
+		cout << "Layer<" << layer->GetIndex() << ">: " << count << " objects.\n";
 
 	return true;
 }

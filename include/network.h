@@ -36,8 +36,7 @@ public:
 	inline void RegisterLoss(float l) { loss += l; }
 	inline float GetLoss() const { return loss; } 
 	inline int GetAnchorCount() const { return (int)anchors.size(); }
-	inline TensorOrder GetDataOrder() const { return data_order; }
-	bool RandomResize();
+	inline TensorOrder GetDataOrder() const { return data_order; } 
 	inline const string& DefaultActivation() const { return def_actvation; }
 
 	bool Load(const char* filename);

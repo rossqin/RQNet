@@ -94,6 +94,7 @@ bool Image::Crop(Image& result, int dx, int dy, int w, int h) {
 	result.height = h;
 	result.width = w;
 	result.data = New float[channels * w * h];
+	result.normalized = normalized;
 	size_t bytes = w * sizeof(float);
 
 	for (int c = 0; c < channels; c++) {

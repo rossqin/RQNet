@@ -188,7 +188,8 @@ bool CNNNetwork::Train() {
 			avg_loss = avg_loss * 0.9 + loss * 0.1;
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
 		float lr = GetAppConfig().GetCurrentLearningRate(it);
-		cout << "\nIteration " << it << ", learning-rate: " << lr << ", time-used: " << ms << " ms, "
+		cout << "\nIter " << it << ", loss : " << loss <<", avg-loss: "<< avg_loss 
+			<<", rate: " << lr << ", time: " << (ms * 0.001) << " s , "
 			<< it * GetAppConfig().GetBatch() << " images processed.\n";
 		//TODO: save 
 		lr /= GetAppConfig().GetBatch();
@@ -205,6 +206,7 @@ bool CNNNetwork::Train() {
 		if (GetAppConfig().GetWeightsPath(it, weights_file)) {
 			GetParamPool().Save(weights_file.c_str());
 		}
+		it++;
 	}
 	//TODO : save final 
 	return true;

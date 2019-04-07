@@ -493,27 +493,17 @@ __global__ static void img_rotate_kernel(float* data, int width, int height, int
 __global__ static void img_rot180_kernel(float* data, int width, int height, int channels, int elements) {
 
 	int max_y = height >> 1; 
-	int c_size = height * width;
-	
-	int y = blockIdx.x;
-	int x = threadIdx.x; 
+	int c_size = height * width; 
 	for (int c = 0 ; c < channels; c++, data += c_size) {
-		while (y < max_y) {
-			int ny = height - y - 1;
-			int off = y * width;
-			int n_off = ny * width;
-			while (x < width) {
-				int nx = width - x - 1;
-				int idx = off + x;
-				int n_idx = n_off + nx;
-				if (idx < c_size && n_idx < c_size) {
-					int temp = data[idx];
-					data[idx] = data[n_idx];
-					data[n_idx] = temp;
-				} 
-				x += blockDim.x;
+		for (int y = blockIdx.x; y < max_y; y += gridDim.x) {			
+			for (int x = threadIdx.x; x < width; x += blockDim.x) {
+				int i1 = y * width + x;
+				int i2 = c_size - i1 - 1;
+				float temp = data[i1];
+				data[i1] = data[i2];
+				data[i2] = temp;
 			}
-			y += gridDim.x;
+			
 		}
 	}
 }
@@ -532,7 +522,7 @@ bool Image::Rotate(RotateType rt) {
 		int temp = height;
 		height = width;
 		width = temp;
-	}
+	} 
 	if (rt == Rotate180)
 		img_rot180_kernel<<<g,b>>>(gpu_data, width, height, channels, e);
 	else

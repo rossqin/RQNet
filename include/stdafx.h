@@ -70,5 +70,5 @@ bool is_suffix(const char* filename, const char* ext);
 void dump_mem(float* data, int n);
 void split_string(vector<string>& result, const string& str, char ch = ',');  
 const char* replace_extension(string& str, const char* new_ext);
-
+void show_usage(const char* bin);
 #endif

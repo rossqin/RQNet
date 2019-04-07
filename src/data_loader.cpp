@@ -27,14 +27,15 @@ bool DataLoader::ImagePostLoad(Image & image,  ImageLabelParseInfo & info) {
 	if (info.orig_h != info.actual_h || info.orig_w != info.actual_w) {
 		// normally big pictures, need to shrink. Operation: to crop and then to resize		
 		Image cropped;
+		
 		if (!image.Crop(cropped, info.crop_l, info.crop_t, info.crop_r - info.crop_l, info.crop_b - info.crop_t))
-			return false; 
+			return false;  
 		if (!cropped.ResizeTo(info.actual_w, info.actual_h, GetAppConfig().FastResize()))
 			return false; 
-		image = cropped;
-
+		
+		image = cropped; 
 	}
-	if (!image.Rotate(info.rotate)) return false; 
+	if (!image.Rotate(info.rotate)) return false;  
 	float hue = GetAppConfig().GetHue();
 
 	info.hue = rand_uniform_strong(-hue, hue);
@@ -268,8 +269,9 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
  
 		//cout << "*** loading " << info.file_name << " *** \n";
 		if (!image.Load(info.file_name, input.GetChannels())) return false;
+ 
 		//cout << " --- image file loaded . ---\n";
-		if (!ImagePostLoad(image, info)) return false;
+		if (!ImagePostLoad(image, info)) return false; 
 		//cout << " --- post loaded processed . ---\n";
 		if(!input.Set3DData(i, image.GetData())) return false;
 		//cout << " --- append to input. ---\n";
@@ -281,14 +283,13 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 		}
 		if (GetAppConfig().SaveInput()) { 
 			char fname[MAX_PATH];
-			char ext[MAX_PATH];
-			time_t timep;
+			char ext[MAX_PATH]; 
+			const char* t = get_time_str();
 			_splitpath(info.file_name, NULL, NULL, fname, ext);			
-			time(&timep); 
-			strcat(fname, asctime(gmtime(&timep)));
-			string str = GetAppConfig().SaveInputDir() + fname + ext ; 
+		 
+			string str = GetAppConfig().SaveInputDir() + fname + '_' + t + ext ; 
 			image.Save(str.c_str());
-			str = GetAppConfig().SaveInputDir() + fname + ".";
+			replace_extension(str, ".txt");
 			ofstream file(str);
 			if (file.is_open()) {
 				ObjectInfo* temp = truth_data; 
