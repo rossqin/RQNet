@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RQNet-Config small-object="true"> 
+	<!--by default all *.jpg files under this folder are loaded as -->
+	<datasets image-resize-fast="true" >
+		<dataset name="my-dataset-for-training">
+			<type>folder</type>
+			<path>E:\AI\Data\areca-train\train</path>
+		</dataset>
+		<dataset name="my-dataset-for-testing">
+			<type>folder</type>
+			<path>E:\AI\Data\areca-train\test</path>
+		</dataset>
+	</datasets>
+	<train-settings freeze-conv="false" freeze-activation="false" freeze-batchnorm="false">
+		<dataset>my-dataset-for-training</dataset>
+		<save_input>false</save_input>
+		<update_strategy>SGD</update_strategy>
+		<input_files_dir>network_input</input_files_dir>
+		<termination>500000</termination>
+		<weights>
+			<save>100</save>
+			<output_dir>backup</output_dir>
+			<prefix>rq_weights_</prefix>
+			<momentum>0.9</momentum> 
+			<decay>0.0005</decay>
+		</weights>
+		<data_aug>
+			<jitter>0.1</jitter>
+			<saturation>1.2</saturation>
+			<exposure>1.2</exposure>
+			<hue>0.1</hue> 
+		</data_aug>
+		<multi_scale enable="true" interval="20">
+			<!-- w, h -->
+			<scale width="352" height="352" />
+			<scale width="384" height="384" />
+			<scale width="416" height="416" />
+			<scale width="448" height="448" />
+			<scale width="480" height="480" />
+		</multi_scale>
+		<batch>32</batch>
+		<subdivision>8</subdivision>
+		<learning_rate>
+			<base>0.001</base>
+			<burn_in>1000</burn_in>
+			<policy>steps</policy>
+			<steps>
+				<step iteration="40000" rate="0.0001" /> 
+				<step iteration="50000" rate="0.00001" />
+			</steps>
+		</learning_rate>		
+		<restart>false</restart>
+		<max_truths>256</max_truths> 
+	</train-settings>
+	<test-settings>
+		<dataset>my-dataset-for-testing</dataset>
+	</test-settings>
+</RQNet-Config>

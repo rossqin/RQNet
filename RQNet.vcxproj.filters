@@ -1,0 +1,128 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="src">
+      <UniqueIdentifier>{2ab07bdf-eb59-4d6e-8ab3-e82c49132d41}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="include">
+      <UniqueIdentifier>{d079acb0-500a-4bf2-bf2a-d27c946ad6e2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gflags">
+      <UniqueIdentifier>{b76a168c-caf4-4581-bafb-903c21dbfe6c}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tensor.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\utils.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\network.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\config.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\tinyxml2.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\image.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\param_pool.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inference_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\yolo.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\box.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\data_loader.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="thirdparty\gflags\src\gflags.cc">
+      <Filter>gflags</Filter>
+    </ClCompile>
+    <ClCompile Include="thirdparty\gflags\src\gflags_completions.cc">
+      <Filter>gflags</Filter>
+    </ClCompile>
+    <ClCompile Include="thirdparty\gflags\src\gflags_reporting.cc">
+      <Filter>gflags</Filter>
+    </ClCompile>
+    <ClCompile Include="thirdparty\gflags\src\windows_port.cc">
+      <Filter>gflags</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\args.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\tensor.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\stdafx.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\layer.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\config.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\network.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\image.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\stb_image.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\stb_image_write.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\inference_module.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\param_pool.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\activation.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\box.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\yolo.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\data_loader.h">
+      <Filter>include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="src\tensor.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\image.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\activation.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\maxpool_patch.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
+  </ItemGroup>
+</Project>
