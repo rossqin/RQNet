@@ -67,15 +67,20 @@ public :
 	bool UpdateParams(float lr);
 	
 };
+enum PooingMode{
+	POOLING_MAX = 0,
+	POOLING_AVG 
+};
 class PoolingModule : public InferenceModule {
 protected:
 	int stride_w;
 	int stride_h;
 	int window_w;
 	int window_h;
+	int pad_w;
+	int pad_h;
 	int* indexes;
-	cudnnPoolingMode_t mode;
-	cudnnPoolingDescriptor_t desc; 
+	PooingMode mode;
 	bool InitDescriptors(bool trainning);
 public :
 	PoolingModule(const XMLElement* element, Layer* l, TensorOrder order);

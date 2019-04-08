@@ -233,46 +233,57 @@ struct sample_params {
 	int batchs;
 	int channels;
 	float stride_w;
-	float stride_h ; 
-	float stride_w_reci;
-	float stride_h_reci; 
-	
+	float stride_h ;
+	bool  is_nchw;
 
 };
-__global__ static void tensor_upsample_kernel_nchw(sample_params params) {  
-	float* src = params.src_mem;
-	float* dst = params.dst_mem;
-	for (int b = 0; b < params.batchs; b++) {
-		for (int c = 0; c < params.channels; c++, src += params.src_e2d , dst += params.dst_e2d) {
-			for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
-				int src_y = (int)(y * params.stride_h_reci);
-				for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-					int src_x = (int)(x * params.stride_w_reci);
-					dst[ y * params.dst_width + x] = src[ src_y * params.src_width + src_x];
+__global__ static void tensor_upsample_kernel(sample_params p) {  
+	float* src = p.src_mem;
+	float* dst = p.dst_mem;
+	for (int b = 0; b < p.batchs; b++) {
+		if (p.is_nchw) {
+			for (int c = 0; c < p.channels; c++, src += p.src_e2d, dst += p.dst_e2d) {
+				for (int y = blockIdx.x; y < p.src_height; y += gridDim.x) { 
+					int dst_y = y * p.stride_h;
+					int src_off = y * p.src_width;
+					for (int x = threadIdx.x; x < p.src_width; x += blockDim.x) { 
+						int dst_x = x * p.stride_w;
+						int src_index = src_off  + x;
+						for (int i = 0; i < p.stride_h; i++) {
+							int dst_off = (dst_y + i) * p.dst_width + dst_x;
+							for (int j = 0; j < p.stride_w; j++) { 
+								dst[dst_off + j] = src[src_index];
+							}
+						}
+						
+					}
+				}
+			}
+		}
+		else { // nchw
+			src += p.src_e3d;
+			dst += p.dst_e3d;
+			for (int y = blockIdx.x; y < p.src_height; y += gridDim.x) {
+				int dst_y = y * p.stride_h;
+				int src_off = y * p.src_width;
+				for (int x = threadIdx.x; x < p.src_width; x += blockDim.x) {
+					int dst_x = x * p.stride_w;
+					int src_index = (src_off + x) * p.channels ;
+					for (int i = 0; i < p.stride_h; i++) {
+						int dst_off = (dst_y + i) * p.dst_width;
+						for (int j = 0; j < p.stride_w; j++) {
+							int dst_index = (dst_off + dst_x + j) * p.channels ;
+							for (int c = 0; c < p.channels; c++) {
+								dst[dst_index + c] = src[src_index + c];
+							}
+						}
+					}
+
 				}
 			}
 		}
 	}	
-}
-__global__ static void tensor_upsample_kernel_nhwc(sample_params params) {
-	int x = threadIdx.x;
-	float* src = params.src_mem;
-	float* dst = params.dst_mem;
-	for (int b = 0; b < params.batchs; b++, src += params.src_e3d,
-		dst += params.dst_e3d) {		
-		for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
-			int src_y = (int)(y * params.stride_h_reci);
-			for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-				int src_x = (int)(x * params.stride_w_reci);
-				int dst_p = ( y * params.dst_width + x) * params.channels;
-				int src_p = (src_y * params.src_width + src_x) * params.channels;
-				for (int c = 0; c < params.channels; c++) {					
-					dst[dst_p + c] = src[src_p + c];
-				}
-			}
-		}
-	}
-}
+} 
 
 bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )const {
 	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
@@ -293,40 +304,65 @@ bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )
 	sample_params params = {
 		gpu_data , width, height, elements_2d, elements_3d,
 		result.gpu_data, result.width, result.height, result.elements_2d, result.elements_3d,
-		batch, channels,stride_w,stride_h, 1.0 / stride_w,1.0 / stride_h  };
-	if(order == TO_NCHW)
-		tensor_upsample_kernel_nchw<<<g,b>>>(params);
-	else 
-		tensor_upsample_kernel_nhwc<<<g,b>>>(params);
+		batch, channels,stride_w,stride_h, order == TO_NCHW };
+ 
+	tensor_upsample_kernel<<<g,b>>>(params); 
 	cudaError_t err = cudaDeviceSynchronize();
 
 	if (err != cudaSuccess) {
-		cerr << "FloatTensor4D.UpSample failed - cudaSynchronize failed err " << err << "!\n" ;
-		cudaGetLastError(); 
-
+		cerr << "FloatTensor4D.UpSample failed - cudaSynchronize failed err " << err << "!\n";
 		return false;
 	} 
 	return true;
 }
-__global__ static void tensor_downsample_kernel_nchw(sample_params params) {
-	float* src = params.src_mem;
-	float* dst = params.dst_mem;
-	for (int b = 0; b < params.batchs; b++) {
-		for (int c = 0; c < params.channels; c++, src += params.src_e2d, dst += params.dst_e2d) {
-			for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
-				int src_y = y * params.stride_h ;
-				for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-					int src_x =  x * params.stride_w ;
-					int index = y * params.dst_width + x;
-					dst[index] = 0.0;
-					for (int i = 0; i < params.stride_h; i++) {
-						for (int j = 0; j < params.stride_w; j++) {
-							dst[index] += src[(src_y + i) * params.src_width + src_x + j];
+__global__ static void tensor_downsample_kernel(sample_params p) {
+	float* src = p.src_mem;
+	float* dst = p.dst_mem;
+	for (int b = 0; b < p.batchs; b++) {
+		if (p.is_nchw) {
+			for (int c = 0; c < p.channels; c++, src += p.src_e2d, dst += p.dst_e2d) {
+				for (int y = blockIdx.x; y < p.dst_height; y += gridDim.x) {
+					int src_y = y * p.stride_h;
+					int dst_off = y * p.dst_width;
+					for (int x = threadIdx.x; x < p.dst_width; x += blockDim.x) {
+						int src_x = x * p.stride_w;
+						int dst_index = dst_off + x;
+						dst[dst_index] = 0.0;
+						for (int i = 0; i < p.stride_h; i++) {
+							int src_off = (src_y + i) * p.src_width + src_x;
+							for (int j = 0; j < p.stride_w; j++) {
+								dst[dst_index] += src[src_off + j];
+							}
 						}
 					}
 				}
 			}
 		}
+		else {
+			src += p.src_e3d;
+			dst += p.dst_e3d;
+			for (int y = blockIdx.x; y < p.dst_height; y += gridDim.x) {
+				int src_y = y * p.stride_h;
+				int dst_off = y * p.dst_width;
+				for (int x = threadIdx.x; x < p.dst_width; x += blockDim.x) {
+					int src_x = x * p.stride_w;
+					int dst_index = (dst_off + x) * p.channels;
+					for (int c = 0; c < p.channels; c++) {
+						dst[dst_index + c] = 0.0;
+					}
+					for (int i = 0; i < p.stride_h; i++) {
+						int src_off = (src_y + i) * p.src_width + src_x;
+						for (int j = 0; j < p.stride_w; j++) {
+							int src_index = (src_off + j) * p.channels;
+							for (int c = 0; c < p.channels; c++) {
+								dst[dst_index + c] = src[src_index + c];
+							} 
+						}
+					}
+				}
+			}
+		}
+
 	}
 	 
 }
@@ -349,9 +385,9 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 	sample_params params = {
 		gpu_data , width, height, elements_2d, elements_3d,
 		result.gpu_data, result.width, result.height, result.elements_2d, result.elements_3d,
-		batch, channels,stride_w,stride_h, 1.0, 1.0 };
+		batch, channels,stride_w,stride_h, order == TO_NCHW};
 	if (order == TO_NCHW)
-		tensor_downsample_kernel_nchw <<<g, b>>>(params);
+		tensor_downsample_kernel <<<g, b>>>(params);
 	else {
 		//TODO: finish downsample under NHWC case
 		return false;

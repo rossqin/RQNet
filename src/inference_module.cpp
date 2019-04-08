@@ -324,11 +324,11 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 	AppConfig& cfg = GetAppConfig(); 
 	if (cfg.ConvParamsFreezed()) return true;
 	float m = cfg.Momentum();
-	float decay = 0.0f - cfg.Decay();
+	float decay = (0.0f - cfg.Decay()) * GetAppConfig().GetBatch();
 	if (cfg.UpdateStrategy() == "SGD") {
 
 		if (bias.GetChannels() != 0) { 
-			//if (!dbias.AddScale(bias,-cfg.Decay())) return false;
+			if (!dbias.AddScale(bias,-cfg.Decay())) return false;
 			if (!bias.AddScale(dbias, lr)) return false;
 			 if (!dbias.Mul(m)) return false;
 		}
@@ -382,34 +382,24 @@ bool PoolingModule::InitDescriptors(bool trainning) {
 	 
 	int b = input.GetBatch(), c = input.GetChannels(), h = input.GetHeight(), w = input.GetWidth();
 	
-	if (stride_w != 1 && stride_h != 1) {
-		if (NULL == x_desc || NULL == y_desc || NULL == desc) return false;
-		if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(x_desc,
-			(input.GetOrder() == TO_NCHW) ? CUDNN_TENSOR_NCHW : CUDNN_TENSOR_NHWC,
-			CUDNN_DATA_FLOAT,b, c, h, w	))
-			return false;
-		if (CUDNN_STATUS_SUCCESS != cudnnGetPooling2dForwardOutputDim(desc, x_desc, &b, &c, &h, &w))
-			return false;
-		if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(y_desc,
-			(input.GetOrder() == TO_NCHW) ? CUDNN_TENSOR_NCHW : CUDNN_TENSOR_NHWC,
-			CUDNN_DATA_FLOAT, b, c, h, w))
-			return false;
-		
-	}
-	else {
+	
+	int out_w = (w + pad_w - window_w) / stride_w + 1;
+	int out_h = (h + pad_h - window_h) / stride_h + 1;
+	if (!output.Init(b, c, out_w, out_h, input.GetOrder())) return false;
+
+	if (trainning) {
 		if (indexes) {
 			cudaFree(indexes);
 			indexes = NULL;
 		}
-		cudaMalloc(&indexes, input.MemElements() * sizeof(int));
+		cudaMalloc(&indexes, output.MemElements() * sizeof(int));
 	}
-	if (!output.Init(b, c, w, h, input.GetOrder())) return false;
 	
 	return true;
 }
 
 PoolingModule::PoolingModule(const XMLElement * element, Layer * l, TensorOrder order) {
-	desc = NULL;
+ 
 	x_desc = NULL;
 	y_desc = NULL;
 	layer = l;
@@ -424,39 +414,22 @@ PoolingModule::PoolingModule(const XMLElement * element, Layer * l, TensorOrder 
 	stride_w = element->IntAttribute("stride-w", 2);
 	stride_h = element->IntAttribute("stride-h", 2); 
 
+	pad_w = element->IntAttribute("pad-w", window_w - 1);
+	pad_h = element->IntAttribute("pad-h", window_h - 1);
+
 	GetPrevModules(element);
 
-	mode = CUDNN_POOLING_MAX;
-	if (t == "max-pool")
-		mode = CUDNN_POOLING_MAX;
-	else if (t == "avg-pool")
-		mode = CUDNN_POOLING_AVERAGE_COUNT_INCLUDE_PADDING;
-	else if (t == "avg-pool-no-padding")
-		mode = CUDNN_POOLING_AVERAGE_COUNT_EXCLUDE_PADDING;
-	else if (t == "avg-pool-deterministic")
-		mode = CUDNN_POOLING_MAX_DETERMINISTIC;	
-	if (stride_w != 1 && stride_h != 1) {
-		cudnnCreatePoolingDescriptor(&desc);
-		if (desc) {
-			if (CUDNN_STATUS_SUCCESS != cudnnSetPooling2dDescriptor(desc, mode,
-				CUDNN_NOT_PROPAGATE_NAN, window_h, window_w, 0, 0, stride_h, stride_w)) {
-				cudnnDestroyPoolingDescriptor(desc);
-				desc = NULL;
-			}
-		}
-		cudnnCreateTensorDescriptor(&x_desc);
-		cudnnCreateTensorDescriptor(&y_desc);
-	}
+	mode =  POOLING_MAX;
+	if (t == "avg-pool") mode = POOLING_AVG; 
+
+ 
 	output_channels = input_channels;
 }
 
-PoolingModule::~PoolingModule() {
-	if(desc) cudnnDestroyPoolingDescriptor(desc);
-	if (x_desc) cudnnDestroyTensorDescriptor(x_desc);
-	if (y_desc) cudnnDestroyTensorDescriptor(y_desc); 
+PoolingModule::~PoolingModule() { 
 	if (indexes) cudaFree(indexes);
 }
-extern bool forward_one_stride_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* indexes, int window_w, int window_h);
+ 
 void dump_gpu_data(const string& filename ,int* data, int width, int height) {
 	int s = width * height;
 	int* buffer = new int[s];
@@ -480,51 +453,30 @@ void dump_gpu_data(const string& filename ,int* data, int width, int height) {
 	}
 	delete[]buffer;
 }
+extern bool forward_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* indexes, int window_w, int window_h, int pad_w, int pad_h, int stride_w, int stride_h);
+extern bool backward_maxpool(FloatTensor4D& prev_delta, const FloatTensor4D& delta, int* indexes, int window_w, int window_h, int pad_w, int pad_h, int stride_w, int stride_h);
+
 bool PoolingModule::Forward(ForwardContext & context) {
+	//TODO: implements the NHWC version
+	if (context.input.GetOrder() != TO_NCHW) return false;
 	if (!InferenceModule::Forward(context)) return false;
-	//fix: stride == 1 
-	 	 
-		
-	if (stride_w != 1 && stride_h != 1) {
-		if (CUDNN_STATUS_SUCCESS != cudnnPoolingForward(GetCUDNNHandle(),
-			desc, &one, x_desc, input.GetMem(), &zero, y_desc, output.GetMem()))
-			return false;
-	}
-	else {
-		input.DumpToFile(name + ".forward.01.txt",2,2);
-		if(!forward_one_stride_maxpool(output, input, indexes, window_w, window_h))
-			return false; 
-		output.DumpToFile(name + ".forward.02.txt", 2, 2);
-		int* temp = indexes + (2 * input_channels + 2) * input_height * input_width;
-		dump_gpu_data(name + ".forward.indexes.txt", temp, input_width, input_height);
-		//return false;
-	}
-	//
-	//
+
+	if (!forward_maxpool(output, input, indexes, window_w, window_h, pad_w, pad_h, stride_w, stride_h))
+		return false;
+	//input.DumpToFile(name + ".fwd.01.txt");
+	//output.DumpToFile(name + ".fwd.02.txt");
+	
 	return true;
 }
-extern bool backward_one_stride_maxpool(FloatTensor4D& delta, int* indexes);
+ 
 bool PoolingModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
-	//
-	if (stride_w != 1 && stride_h != 1) {
-		FloatTensor4D dy(delta);
-		delta.Release();
-		if (!delta.Init(input.GetBatch(), input.GetChannels(), input.GetWidth(),
-			input.GetHeight(), input.GetOrder()))
-			return false;
-		if (CUDNN_STATUS_SUCCESS != cudnnPoolingBackward(GetCUDNNHandle(),
-			desc, &one, y_desc, output.GetMem(), y_desc, dy.GetMem(),
-			x_desc, input.GetMem(), &zero, x_desc, delta.GetMem()))
-			return false;
-	}
-	else {
-		delta.DumpToFile(name + ".backward.01.txt",2,2);
-		if(!backward_one_stride_maxpool(delta, indexes))
-			return false;
-		delta.DumpToFile(name + ".backward.02.txt",2,2);
-	}
 	
+	if (!backward_maxpool(input,delta, indexes, window_w, window_h, pad_w, pad_h, stride_w, stride_h))
+		return false;
+	//delta.DumpToFile(name + ".bwd.01.txt");
+	delta = input;
+	//delta.DumpToFile(name + ".bwd.02.txt");
 	return DistributeDeltas(delta);
 }
 
@@ -711,7 +663,7 @@ bool BatchNormModule::UpdateParams(float lr) {
 	float* gamma_update;
 	float* beta_update;
 	*/
-	float decay = cfg.Decay();
+	float decay = cfg.Decay() * cfg.GetBatch();
 	
 	size_t bytes = sizeof(float) * output_channels;
 	float* beta_cpu = New float[output_channels];
@@ -732,11 +684,11 @@ bool BatchNormModule::UpdateParams(float lr) {
 		for (int i = 0; i < output_channels; i++) {
 			beta_update_cpu[i] -= decay * beta_cpu[i];
 			beta_cpu[i] += lr * beta_update_cpu[i];
-			beta_update_cpu[i] *= m;
+			beta_update_cpu[i]   *= m;
 
 			gamma_update_cpu[i] -= decay * gamma_cpu[i];
 			gamma_cpu[i] += lr * gamma_update_cpu[i];
-			gamma_update_cpu[i] = m;
+			gamma_update_cpu[i]  *= m;
 
 		}
 	}
@@ -817,7 +769,6 @@ bool UpSampleModule::InitDescriptors(bool training) {
 	TensorOrder o = input.GetOrder();
 	return output.Init(b, c, w * stride_w, h * stride_h, o); 
 }
-
 bool UpSampleModule::Forward( ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false; 
 	//input.DumpToFile(name + ".forward.before.txt");
@@ -827,12 +778,12 @@ bool UpSampleModule::Forward( ForwardContext & context) {
 }
 
 bool UpSampleModule::Backward(FloatTensor4D & delta) {
+
 	if (!InferenceModule::Backward(delta)) return false;
+	if (!delta.DownSample(input, stride_w, stride_h)) return false; 
 	//delta.DumpToFile(name + ".backward.01.txt");
-	if(!delta.DownSample(input,stride_w,stride_h)) return false;
 	delta = input; 
-	//input.DumpToFile(name + ".backward.02.txt");
-	//delta.DumpToFile(name + ".backward.03.txt");
+	//delta.DumpToFile(name + ".backward.02.txt"); 
 	return DistributeDeltas(delta);
 }
 

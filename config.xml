@@ -30,7 +30,7 @@
 			<exposure>1.2</exposure>
 			<hue>0.1</hue> 
 		</data_aug>
-		<multi_scale enable="true" interval="20">
+		<multi_scale enable="false" interval="10">
 			<!-- w, h -->
 			<scale width="352" height="352" />
 			<scale width="384" height="384" />
@@ -38,15 +38,15 @@
 			<scale width="448" height="448" />
 			<scale width="480" height="480" />
 		</multi_scale>
-		<batch>64</batch>
-		<subdivision>8</subdivision>
+		<batch>32</batch>
+		<subdivision>2</subdivision>
 		<learning_rate>
 			<base>0.001</base>
 			<burn_in>1000</burn_in>
 			<policy>steps</policy>
 			<steps>
-				<step iteration="10000" rate="0.0001" /> 
-				<step iteration="20000" rate="0.00001" />
+				<step iteration="40000" rate="0.0001" /> 
+				<step iteration="60000" rate="0.00001" />
 			</steps>
 		</learning_rate>		
 		<restart>false</restart>
