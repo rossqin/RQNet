@@ -491,19 +491,22 @@ bool PoolingModule::Forward(ForwardContext & context) {
 			return false;
 	}
 	else {
+		input.DumpToFile(name + ".forward.01.txt",2,2);
 		if(!forward_one_stride_maxpool(output, input, indexes, window_w, window_h))
 			return false; 
-		//dump_gpu_data(name + ".forward.indexes.txt", indexes, input_width, input_height);
+		output.DumpToFile(name + ".forward.02.txt", 2, 2);
+		int* temp = indexes + (2 * input_channels + 2) * input_height * input_width;
+		dump_gpu_data(name + ".forward.indexes.txt", temp, input_width, input_height);
 		//return false;
 	}
-	//input.DumpToFile(name + ".forward.before.txt");
-	//output.DumpToFile(name + ".forward.after.txt");
+	//
+	//
 	return true;
 }
 extern bool backward_one_stride_maxpool(FloatTensor4D& delta, int* indexes);
 bool PoolingModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
-	//delta.DumpToFile(name + ".backward.before.txt");
+	//
 	if (stride_w != 1 && stride_h != 1) {
 		FloatTensor4D dy(delta);
 		delta.Release();
@@ -516,10 +519,12 @@ bool PoolingModule::Backward(FloatTensor4D & delta) {
 			return false;
 	}
 	else {
+		delta.DumpToFile(name + ".backward.01.txt",2,2);
 		if(!backward_one_stride_maxpool(delta, indexes))
 			return false;
+		delta.DumpToFile(name + ".backward.02.txt",2,2);
 	}
-	//delta.DumpToFile(name + ".backward.after.txt");
+	
 	return DistributeDeltas(delta);
 }
 
@@ -725,11 +730,11 @@ bool BatchNormModule::UpdateParams(float lr) {
 	if (cfg.UpdateStrategy() == "SGD") {
 		float m = cfg.Momentum();
 		for (int i = 0; i < output_channels; i++) {
-			//beta_update_cpu[i] -= decay * beta_cpu[i];
+			beta_update_cpu[i] -= decay * beta_cpu[i];
 			beta_cpu[i] += lr * beta_update_cpu[i];
 			beta_update_cpu[i] *= m;
 
-			//gamma_update_cpu[i] -= decay * gamma_cpu[i];
+			gamma_update_cpu[i] -= decay * gamma_cpu[i];
 			gamma_cpu[i] += lr * gamma_update_cpu[i];
 			gamma_update_cpu[i] = m;
 
@@ -823,10 +828,11 @@ bool UpSampleModule::Forward( ForwardContext & context) {
 
 bool UpSampleModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
-	//delta.DumpToFile(name + ".backward.before.txt");
+	//delta.DumpToFile(name + ".backward.01.txt");
 	if(!delta.DownSample(input,stride_w,stride_h)) return false;
 	delta = input; 
-	//delta.DumpToFile(name + ".backward.after.txt");
+	//input.DumpToFile(name + ".backward.02.txt");
+	//delta.DumpToFile(name + ".backward.03.txt");
 	return DistributeDeltas(delta);
 }
 

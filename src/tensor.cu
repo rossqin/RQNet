@@ -239,8 +239,7 @@ struct sample_params {
 	
 
 };
-__global__ static void tensor_upsample_kernel_nchw(sample_params params) { 
-	int x = threadIdx.x; 
+__global__ static void tensor_upsample_kernel_nchw(sample_params params) {  
 	float* src = params.src_mem;
 	float* dst = params.dst_mem;
 	for (int b = 0; b < params.batchs; b++) {
@@ -288,8 +287,8 @@ bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )
 		return false;
 	}
 
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize(height);
+	int b = GPUBlockSize(width);
 
 	sample_params params = {
 		gpu_data , width, height, elements_2d, elements_3d,
@@ -310,33 +309,26 @@ bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )
 	return true;
 }
 __global__ static void tensor_downsample_kernel_nchw(sample_params params) {
-	
 	float* src = params.src_mem;
 	float* dst = params.dst_mem;
 	for (int b = 0; b < params.batchs; b++) {
 		for (int c = 0; c < params.channels; c++, src += params.src_e2d, dst += params.dst_e2d) {
 			for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
-				int src_y = y * params.stride_h;
-				int dst_off = y * params.dst_width;
+				int src_y = y * params.stride_h ;
 				for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-					int src_x = x * params.stride_w; 
-					int dst_i = dst_off + x;
-					dst[dst_i] = 0.0f;
-				 
-					for (int i = src_y + params.stride_h - 1; i >= src_y; i--) {
-						int src_off = i * params.src_width;
-						for (int j = src_x + params.stride_w - 1; j >= src_x; j--) {
-							/*if (b == 0 && c == 0 && x == 3 && y == 4) {
-								printf("i: %d,j:%d,dst_i:%d, src_i:%d, src:%f, dst:%f\n",
-									i, j, dst_i, src_off + j, dst[dst_i], src[src_off + j]);
-							}*/
-							dst[dst_i] += src[src_off + j];
+					int src_x =  x * params.stride_w ;
+					int index = y * params.dst_width + x;
+					dst[index] = 0.0;
+					for (int i = 0; i < params.stride_h; i++) {
+						for (int j = 0; j < params.stride_w; j++) {
+							dst[index] += src[(src_y + i) * params.src_width + src_x + j];
 						}
 					}
 				}
 			}
 		}
 	}
+	 
 }
 bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h )const {
 	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
@@ -350,7 +342,7 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 		cerr << "Error: Wrong result demension in tensor upsample !\n";
 		return false;
 	}
-
+	
 	int g = GPUGridSize(r_height);
 	int b = GPUBlockSize(r_width);
 
@@ -364,7 +356,7 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 		//TODO: finish downsample under NHWC case
 		return false;
 	}
-	 
+	
 	cudaError_t err = cudaDeviceSynchronize();
 
 	if (err != cudaSuccess) {
@@ -373,6 +365,7 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 
 		return false;
 	}
+	
 	return true;
 }
 

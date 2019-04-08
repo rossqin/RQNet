@@ -192,8 +192,8 @@ void FloatTensor4D::DumpToFile(const string& filename, int b, int c) const {
 		for (int y = 0; y < height; y++) {
 			f << endl;
 			for (int x = 0; x < width; x++,i++) {
-				sprintf(temp, "%4.4f ", buffer[i]);
-				f << setw(8) << temp;
+				sprintf(temp, "%.6f ", buffer[i]);
+				f << setw(10) << temp;
 			}
 		}
 

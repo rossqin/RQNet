@@ -14,14 +14,15 @@ struct one_stride_maxpool_params {
 	bool is_nchw;
 };
 __global__ static void forward_one_stride_maxpool_kernel(one_stride_maxpool_params p) {
-	
+	int area = p.width * p.height;
 	for (int b = blockIdx.x; b < p.batch; b += gridDim.x) {
+		int b_off = b * p.channels * area;
 		if (p.is_nchw) {
 			for (int c = threadIdx.x; c < p.channels; c += blockDim.x) {
-				int base = b * p.channels * p.width * p.height +  c * p.width * p.height ;
-				float* src = p.src + base;
-				float* dst = p.dst + base;
-				int* indexes = p.indexes + base;
+				int c_off = b_off +  c * area;
+				float* src = p.src + c_off;
+				float* dst = p.dst + c_off;
+				int* indexes = p.indexes + c_off;
 				int idx_dst = 0;
 				for (int y = 0; y < p.height; y++) {
 					int window_top =  y ;
@@ -36,13 +37,13 @@ __global__ static void forward_one_stride_maxpool_kernel(one_stride_maxpool_para
 						for (int i = window_top; i < window_bottom; i++) {
 							for (int j = window_left; j < window_right; j++) {
 								int idx_src = i * p.width + j;
-								if (isnan(src[idx_src])) { // treat nan as 0
-									if (src[idx_src] > _max) {
-										_max = src[idx_src];
+								if (isnan(src[idx_src]) || isinf(src[idx_src])) { // treat nan as 0
+									if (0.0f > _max) {
+										_max = 0.0f;
 										_max_i = idx_src;
 									}
 								}
-								if (src[idx_src] > _max) {
+								else if (src[idx_src] > _max) {
 									_max = src[idx_src];
 									_max_i = idx_src;
 								}
@@ -74,20 +75,20 @@ __global__ static void forward_one_stride_maxpool_kernel(one_stride_maxpool_para
 						for (int i = window_top; i < window_bottom; i++) {
 							for (int j = window_left; j < window_right; j++) {
 								int idx_src = (i * p.width + j) * p.channels + c;
-								if (isnan(p.src[idx_src])) { // treat nan as 0
-									if (p.src[idx_src] > _max) {
-										_max = p.src[idx_src];
+								if (isnan(src[idx_src]) || isinf(src[idx_src])) { // treat nan as 0
+									if (0.0f > _max) {
+										_max = 0.0f;
 										_max_i = idx_src;
 									}
 								}
-								if (p.src[idx_src] > _max) {
-									_max = p.src[idx_src];
+								else if (src[idx_src] > _max) {
+									_max = src[idx_src];
 									_max_i = idx_src;
 								}
 							}
 						}
-						p.dst[idx_dst + c] = _max;
-						p.indexes[idx_dst + c] = _max_i;
+						dst[idx_dst + c] = _max;
+						indexes[idx_dst + c] = _max_i;
 					}
 				}
 			}
@@ -124,21 +125,20 @@ __global__ static void backward_one_stride_maxpool_kernel(one_stride_maxpool_par
 	for (int b = blockIdx.x; b < p.batch; b += gridDim.x) {
 		if (p.is_nchw) {
 			for (int c = threadIdx.x; c < p.channels; c += blockDim.x) {
-				int base = b * p.channels * p.width * p.height + c * p.width * p.height;
-				float* src = p.src + base;
-				float* dst = p.dst + base;
-				int* indexes = p.indexes + base;
+				int offset = b * p.channels * p.width * p.height + c * p.width * p.height;	 
+				float* dst = p.dst + offset;
+				int* indexes = p.indexes + offset;
 				int index = 0;
 				for (int y = 0; y < p.height; y++) { 
 					for (int x = 0; x < p.width; x++, index++) {
-						dst[index] = (indexes[index] == index) ? src[index] : 0.0f;
+						if(indexes[index] != index) 
+							dst[index] = 0.0f;
 					}
 				}
 			}
 		}
 		else {
-			int base = b * p.channels * p.width * p.height;
-			float* src = p.src + base;
+			int base = b * p.channels * p.width * p.height; 
 			float* dst = p.dst + base;
 			int* indexes = p.indexes + base;
 			int index = 0;
@@ -146,7 +146,8 @@ __global__ static void backward_one_stride_maxpool_kernel(one_stride_maxpool_par
 				for (int x = 0; x < p.width; x++, index += p.channels) {					 
 					for (int c = threadIdx.x; c < p.channels; c += blockDim.x) { 
 						int i = index + c;
-						dst[i] = (indexes[i] == i) ? src[i] : 0.0f;
+						if(indexes[i] != i) 
+							dst[i] = 0.0f;
 					}
 				}
 			}
@@ -154,22 +155,15 @@ __global__ static void backward_one_stride_maxpool_kernel(one_stride_maxpool_par
 	}
 }
 bool backward_one_stride_maxpool(FloatTensor4D& delta, int* indexes) {
-	float* delta_cpy = NULL;
 	if (delta.MemElements() == 0 || NULL == indexes)
 		return false;
-	if (cudaSuccess != cudaMalloc(&delta_cpy, delta.MemBytes())) return false;
-
-	if (cudaSuccess != cudaMemcpy(delta_cpy, delta.GetMem(), delta.MemBytes(), cudaMemcpyDeviceToDevice)) {
-		cudaFree(delta_cpy);
-		return false;
-	}
-
+	 
 	int g = GPUGridSize(delta.GetBatch());
 	int b = GPUBlockSize(delta.GetChannels());
 
 	one_stride_maxpool_params p = {
 		delta.GetMem(),
-		delta_cpy,		
+		NULL,		
 		indexes,
 		delta.GetBatch(),
 		delta.GetChannels(),
@@ -180,8 +174,7 @@ bool backward_one_stride_maxpool(FloatTensor4D& delta, int* indexes) {
 		delta.GetOrder() == TO_NCHW
 	};
 	backward_one_stride_maxpool_kernel<<<g,b>>>(p);
-	cudaError_t e = cudaDeviceSynchronize();
-	cudaFree(delta_cpy);
+	cudaError_t e = cudaDeviceSynchronize(); 
 	return e == cudaSuccess;
 }
 /*
