@@ -154,6 +154,7 @@ bool CNNNetwork::Backward() {
 	}
 	return true;
 }
+
 bool CNNNetwork::Train() {
 
 	if (!cuDNNInitialize()) {
@@ -185,10 +186,11 @@ bool CNNNetwork::Train() {
 			long t = GetTickCount();
 			if (!loader.MiniBatchLoad(input, truths)) return false; 
 			t = GetTickCount() - t;
-			cout << "took " << (t * 0.001) << " secs.\n";
+			cout << " in " << (t * 0.001) << " secs.\n";
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;  
 		}
+		
 		loss /= GetAppConfig().GetBatch();
 		if (avg_loss < 0)
 			avg_loss = loss;
@@ -205,6 +207,7 @@ bool CNNNetwork::Train() {
 			ofs << setw(10) << it << ", " <<  input.GetWidth()<< ", " << input.GetHeight()<< ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
 			ofs.close();
 		}
+		lr /= GetAppConfig().GetBatch();
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
 		}

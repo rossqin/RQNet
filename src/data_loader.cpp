@@ -31,11 +31,11 @@ bool DataLoader::ImagePostLoad(Image & image,  ImageLabelParseInfo & info) {
 		if (!image.Crop(cropped, info.crop_l, info.crop_t, info.crop_r - info.crop_l, info.crop_b - info.crop_t))
 			return false;  
 		if (!cropped.ResizeTo(info.actual_w, info.actual_h, GetAppConfig().FastResize()))
-			return false; 
-		
-		image = cropped; 
+			return false;  
+		image = cropped;  
 	}
-	if (!image.Rotate(info.rotate)) return false;  
+
+	if (!image.Rotate(info.rotate)) return false; 
 	float hue = GetAppConfig().GetHue();
 
 	info.hue = rand_uniform_strong(-hue, hue);
@@ -268,19 +268,28 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 			info.file_name =  ds->FilenameAt(index).c_str();
  
 		//cout << "*** loading " << info.file_name << " *** \n";
-		if (!image.Load(info.file_name, input.GetChannels())) return false;
- 
-		//cout << " --- image file loaded . ---\n";
+		long t1 = GetTickCount();
+		if (!image.Load(info.file_name, input.GetChannels())) return false;  
+		
+		long t2 = GetTickCount() ;
+		//cout << " --- image file loaded in "<< (t2 - t1) << "ms. ---\n";
 		if (!ImagePostLoad(image, info)) return false; 
-		//cout << " --- post loaded processed . ---\n";
-		if(!input.Set3DData(i, image.GetData())) return false;
-		//cout << " --- append to input. ---\n";
+
+		
+		t1 = GetTickCount();
+		//cout << " --- post loaded processed in "<<(t1 - t2)<<"ms. ---\n"; 
+		
+		if(!input.Set3DData(i, image.GetGPUData())) return false;
+		t2 = GetTickCount();
+		//cout << " --- append to input in "<<(t2 - t1)<<"ms. ---\n";
 		string label_path(info.file_name);
 		
 		if (!LoadImageLabel(replace_extension(label_path, ".txt"), truth_data, info)) {
 			cerr << "Error: Reading `" << label_path  << "` failed! \n";
 			return false;
 		}
+		t1 = GetTickCount();
+		//cout << " --- LoadImageLabel in " << (t1 - t2) << "ms. ---\n";
 		if (GetAppConfig().SaveInput()) { 
 			char fname[MAX_PATH];
 			char ext[MAX_PATH]; 

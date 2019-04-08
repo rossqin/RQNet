@@ -48,22 +48,26 @@ Image::Image(int w, int h, int c, float val) {
 }
 
 bool Image::PushToGPU() {
-	int e = width * height * channels;
-	if (0 == e ||NULL == data) return false;
-	 
-	if(NULL == gpu_data && 
-		cudaSuccess != cudaMalloc(&gpu_data, e * sizeof(float))) 
+	int e = width * height * channels; 
+	if (gpu_data) return true;
+	if (0 == e || NULL == data) return false;
+	if(cudaSuccess != cudaMalloc(&gpu_data, e * sizeof(float))) 
 		return false;
 	if (cudaSuccess != cudaMemcpy(gpu_data, data, e * sizeof(float), cudaMemcpyHostToDevice)) {
 		cudaFree(gpu_data);
 		gpu_data = NULL;
 		return false;
 	}
+	delete[]data;
+	data = NULL;
 	return true;
 }
 bool Image::PullFromGPU() {
-	if (NULL == data || NULL == gpu_data) return false;
+	if (data) return true;
 	int e = width * height * channels;
+	if (0 == e || NULL == gpu_data) return false;
+	
+	data = New float[e];
 	cudaError_t err = cudaMemcpy(data, gpu_data, e * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaFree(gpu_data);
 	gpu_data = NULL;
@@ -87,21 +91,37 @@ bool Image::Crop(Image& result, int dx, int dy, int w, int h) {
 	if (dy + h > height) h = height - dy;
 	if (w <= 0 || h <= 0) return false;
 
-	if(result.data)
+	
+	if (result.data) {
 		delete[] result.data;
+		result.data = NULL;
+	}
+	if (result.gpu_data) {
+		cudaFree(result.gpu_data);
+		result.gpu_data = NULL;
+	}
+
+	if (!PushToGPU()) return false;
 	
 	result.channels = channels;
 	result.height = h;
 	result.width = w;
-	result.data = New float[channels * w * h];
 	result.normalized = normalized;
+	cudaMalloc(&result.gpu_data, channels * w * h * sizeof(float));
+	if (NULL == result.gpu_data) return false;
+ 
 	size_t bytes = w * sizeof(float);
 
-	for (int c = 0; c < channels; c++) {
-		for (int y = 0; y < h; y++) {
-			float *src_base = data + c * height * width + (y + dy) * width;
-			float *dest = result.data + c * w * h + y * w;
-			memcpy(dest, src_base + dx, bytes); 
+	int as = height * width;
+	int ad = h * w;
+	float *dest = result.gpu_data;
+	float *src_base = gpu_data;
+	for (int c = 0; c < channels; c++ , src_base += as) {
+		for (int y = 0; y < h; y++ , dest += w) {
+			float* src = src_base + (y + dy) * width + dx;
+			if (cudaSuccess != cudaMemcpy(dest, src, bytes, cudaMemcpyDeviceToDevice)) {
+				return false;
+			}
 		}
 	}
 	return true;
@@ -113,17 +133,18 @@ Image::Image(const Image& img) {
 	height = img.height;
 	channels = img.channels;
 	normalized = img.normalized;
-	
+	gpu_data = NULL;
+	data = NULL;
 	if (img.data) {
 		int e = width * height * channels;
 		data = New float[e];
-		memcpy(data, img.data, e * sizeof(float));
-	}
-	else
-		data = NULL;
-	if (gpu_data) {
-		cudaFree(gpu_data);
-		gpu_data = NULL;
+		memcpy(data, img.data, e * sizeof(float)); 
+	} 
+	if (img.gpu_data) {
+		int b = width * height * channels * sizeof(float);
+		if (cudaSuccess == cudaMalloc(&gpu_data, b )) {
+			cudaMemcpy(gpu_data, img.gpu_data, b, cudaMemcpyDeviceToDevice);
+		} 
 	}
 }
  
@@ -145,9 +166,16 @@ const Image& Image::operator=(const Image& img) {
 		cudaFree(gpu_data);
 		gpu_data = NULL;
 	}
+	if (img.gpu_data) {
+		int b = width * height * channels * sizeof(float);
+		if (cudaSuccess == cudaMalloc(&gpu_data, b)) {
+			cudaMemcpy(gpu_data, img.gpu_data, b, cudaMemcpyDeviceToDevice);
+		}
+	}
 	return *this;
 } 
-constexpr float norm_factor = 1.0 / 255;
+
+bool hwc_uc_2_chw_float(float* dst, const uint8_t* src, int w, int h, int c, bool norm);
 bool Image::Load(const char * filename, int c, bool norm ) {
  
 	//
@@ -171,14 +199,18 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 		file.close();
 	}
 	//stbi_load_from_memory
-
-	unsigned char *buff = stbi_load_from_memory(io_buffer, size, &width, &height, &channels, c);
+	//long t1 = GetTickCount();
+	stbi_uc *buff = stbi_load_from_memory(io_buffer, size, &width, &height, &channels, c);
 	delete[]io_buffer;
+	
+	
 	if (!buff) {
 		cerr << "Cannot load image `" << filename << "`\nSTB Reason: " << stbi_failure_reason() << endl;
 
 		return false;
 	}
+	//long t2 = GetTickCount();
+	//cout << "****** stbi_load " << filename << " in " << (t2 - t1) << "ms.\n";
 	size_t image_size = width * height * channels;
 
 	// convert HWC to CHW
@@ -189,29 +221,34 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 	if (gpu_data) {
 		cudaFree(gpu_data);
 		gpu_data = NULL;
+	} 
+	cudaMalloc(&gpu_data, image_size * sizeof(float));
+	if (NULL == gpu_data) {
+		delete[]buff;
+		return false;
 	}
-	data = New float[image_size];
-	int di = 0;	
-	for (int i = 0; i < channels; i++) {
-		int si = i;
-		for (int j = 0; j < height; j++) {
-			for (int k = 0; k < width; k++, di ++, si += channels) {
-				if(norm)
-					data[di] = (float)buff[si] * norm_factor;
-				else
-					data[di] = (float)buff[si];
-			}
-		}
+	stbi_uc* temp = NULL;
+	cudaMalloc(&temp, image_size);
+	if (NULL == temp || (cudaSuccess != cudaMemcpy(temp, buff, image_size, cudaMemcpyHostToDevice))) {
+		if (temp) cudaFree(temp);
+		cudaFree(gpu_data);
+		gpu_data = NULL;
+		delete[]buff;
+		return false;
 	}
-	delete[]buff;
+	bool ret = hwc_uc_2_chw_float(gpu_data, temp, width, height, channels, norm);
+	cudaFree(temp);
+	
 	normalized = norm;
-	return true;
+	return ret;
 }
 bool Image::Gray(bool rgb /* = true */) {
+	
 	if (3 != channels  || 0 == height || 0 == width) {
 		cerr << "Nothing to do with Image::Gray() \n";
 		return false;
 	}
+	if (!PullFromGPU()) return false;
 	float f[3];
 	if (rgb) {
 		f[0] = 0.299; f[1] = 0.587, f[2] = 0.114;
@@ -242,7 +279,7 @@ bool Image::Gray(bool rgb /* = true */) {
 
 bool Image::Save(const char* filename, int quality) {
 	 
-	if (NULL == data) return false;
+	if (!PullFromGPU()) return false;
 
 	uint8_t *dat_buf = New uint8_t[height * width * channels];
 	int si = 0;

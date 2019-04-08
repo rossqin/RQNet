@@ -11,8 +11,7 @@ protected:
 	int height;
 	float* data;
 	float* gpu_data;
-	bool PushToGPU();
-	bool PullFromGPU();
+	
 public: 
 	Image();
 	Image(const char* filename);
@@ -36,7 +35,10 @@ public:
 	inline int GetWidth() const { return width; }
 	inline int GetChannels() const { return channels; }
 	inline const float* GetData() const { return data; }
+	inline const float* GetGPUData() const { return gpu_data; }
 	bool Gray(bool rgb = true); 
+	bool PushToGPU();
+	bool PullFromGPU();
 };
 
 

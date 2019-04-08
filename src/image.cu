@@ -239,10 +239,8 @@ bool Image::ResizeTo(int w, int h, bool fast, float center_ratio) {
 	}
 	gpu_data = gpu;
 	width = w;
-	height = h;
-	delete[]data;
-	data = New float[e];
-	return PullFromGPU();
+	height = h; 
+	return true;
 }
 
 __device__ inline float three_way_max(float a, float b, float c) {
@@ -326,9 +324,7 @@ bool Image::RGB2HSV(float hue, float sat, float val) {
 	int g = GPUGridSize(height);
 	int b = GPUBlockSize(width);
 	img_rgb2hsv_kernel <<<g, b>>>(gpu_data, width, height, hue, sat, val);
-	if(cudaSuccess != cudaDeviceSynchronize())
-		return false;
-	return PullFromGPU();
+	return (cudaSuccess != cudaDeviceSynchronize()) ;
 
 }
 __device__ static inline float constrain(float x) {
@@ -392,9 +388,7 @@ bool Image::HSV2RGB() {
 	int g = GPUGridSize(height);
 	int b = GPUBlockSize(width);
 	img_hsv2rgb_kernel <<<g, b >>>(gpu_data, width, height);
-	if (cudaSuccess != cudaDeviceSynchronize())
-		return false;
-	return PullFromGPU();
+	return (cudaSuccess != cudaDeviceSynchronize()) ;
 
 
 }
@@ -430,7 +424,7 @@ bool Image::Distort(float hue, float sat, float val) {
 		if (cudaSuccess != cudaDeviceSynchronize())
 			return false;
 	}
-	return PullFromGPU(); 
+	return true; 
 
 
 }
@@ -539,4 +533,27 @@ bool Image::Rotate(RotateType rt) {
 		return false;
 	return PullFromGPU(); 
 }
-
+constexpr float norm_factor = 1.0 / 255;
+__global__ static void hwc_uc_2_chw_float_kernel(float* dst, const uint8_t* src, int width, int height, int channels, bool norm) {
+	int area = width * height;
+	for (int c = 0; c < channels; c++, dst += area) {
+		for (int y = blockIdx.x; y < height; y += gridDim.x) {
+			int offset = y * width;
+			for (int x = threadIdx.x; x < width; x += blockDim.x) {
+				int index = offset + x;
+				if (norm)
+					dst[index] = src[index * channels + c] * norm_factor;
+				else
+					dst[index] = src[index * channels + c];
+			}
+		}
+	} 
+}
+bool hwc_uc_2_chw_float(float* dst, const uint8_t* src, int w, int h, int c, bool norm) {
+	int g = GPUGridSize(h);
+	int b = GPUBlockSize(w);
+	hwc_uc_2_chw_float_kernel<<<g,b>>>(dst, src, w, h, c, norm);
+	cudaError_t err = cudaDeviceSynchronize();
+	return (err == cudaSuccess);
+}
+ 

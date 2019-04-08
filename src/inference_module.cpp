@@ -324,6 +324,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 	AppConfig& cfg = GetAppConfig(); 
 	if (cfg.ConvParamsFreezed()) return true;
 	float m = cfg.Momentum();
+	float decay = 0.0f - cfg.Decay();
 	if (cfg.UpdateStrategy() == "SGD") {
 
 		if (bias.GetChannels() != 0) { 
@@ -332,7 +333,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 			 if (!dbias.Mul(m)) return false;
 		}
 
-		if (!dw.AddScale(w, -cfg.Decay())) return false;
+		if (!dw.AddScale(w, decay)) return false;
 		if (!w.AddScale(dw, lr)) return false;		 
 		if (!dw.Mul(m)) return false;
 		

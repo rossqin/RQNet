@@ -70,7 +70,7 @@ public:
 	bool MulAdd(float scale, const FloatTensor4D& right);
 	bool AddScale(const FloatTensor4D& right, float scale);
 
-	bool Set3DData(int index, const float*  src, bool src_from_cpu = true);
+	bool Set3DData(int index, const float*  src, bool src_from_cpu = false);
 
 	void DumpToFile(const string& filename, int b = 0 , int c = 0) const ;
 
