@@ -51,8 +51,12 @@ bool FloatTensor4D::Init(int b, int c, int w, int h ,TensorOrder o) {
 		return true;
 	order = o;
 	if (gpu_data) {
-		cudaFree(gpu_data);
+		cudaError_t e1 = cudaPeekAtLastError();
+		cudaError_t err = cudaFree(gpu_data);
 		gpu_data = NULL;
+		if (err != cudaSuccess) {
+			cerr << "cudaFree at 0x" << hex << setw(10) << setfill('0') << (size_t)gpu_data << " return " << (int)err << endl;
+		}
 	}
 	if (cpu_data) {
 		delete []cpu_data;
@@ -74,6 +78,7 @@ bool FloatTensor4D::Init(int b, int c, int w, int h ,TensorOrder o) {
 	elements = batch * elements_3d;
 	bytes = sizeof(float) * elements;
 	if (data_in_gpu) {
+		
 		cudaError_t err = cudaMalloc(&gpu_data, bytes);
 		if (err != cudaSuccess) {
 			cout << "Error: Try to allocate " << bytes << " bytes of GPU memory failed in FloatTensor4D.constructor! Error code : " << err << endl;
@@ -167,8 +172,8 @@ bool FloatTensor4D::Set3DData(int index, const float* src, bool src_from_cpu) {
 
 	return  err == cudaSuccess;
 }
-void FloatTensor4D::DumpToFile(const char* filename, int b, int c) const { 
-	if (!filename || 0 == elements || b < 0 || c < 0 || b >= batch || c >= channels) return;
+void FloatTensor4D::DumpToFile(const string& filename, int b, int c) const { 
+	if (filename.length() == 0 || 0 == elements || b < 0 || c < 0 || b >= batch || c >= channels) return;
 
 	int s = width * height;
 	float* buffer = new float[s];
@@ -188,7 +193,7 @@ void FloatTensor4D::DumpToFile(const char* filename, int b, int c) const {
 			f << endl;
 			for (int x = 0; x < width; x++,i++) {
 				sprintf(temp, "%4.4f ", buffer[i]);
-				f << setw(10) << temp;
+				f << setw(8) << temp;
 			}
 		}
 

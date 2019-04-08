@@ -154,9 +154,8 @@ int main(int argc, char* argv[]) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);
 	}
 	else if (strcmp(command, "wconv") == 0) {
-		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_i,FLAGS_o); 
+		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_i, FLAGS_o); 
 	}
 	if(ret) return 0; 
-	show_usage(exe);
 	return 1;
 }

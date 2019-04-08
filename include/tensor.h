@@ -72,7 +72,7 @@ public:
 
 	bool Set3DData(int index, const float*  src, bool src_from_cpu = true);
 
-	void DumpToFile(const char* filename, int b, int c) const ;
+	void DumpToFile(const string& filename, int b = 0 , int c = 0) const ;
 
 	bool UpSample(FloatTensor4D& result, int stride_w, int stride_h ) const;
 	bool DownSample(FloatTensor4D& result, int stride_w, int stride_h ) const;

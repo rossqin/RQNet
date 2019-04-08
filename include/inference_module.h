@@ -90,6 +90,7 @@ protected:
 	float* var;
 	float* gamma_update;
 	float* beta_update;
+	bool freezed;
 	cudnnTensorDescriptor_t t_desc; 
 	bool InitDescriptors(bool trainning);
 public:

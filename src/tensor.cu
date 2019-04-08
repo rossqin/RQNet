@@ -89,7 +89,7 @@ bool add_in_gpu(float* dest, float* src, int elements) {
 	tensor_add_kernel <<<g, b>>>(dest, src, (int)elements, threads);
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		cerr << "Error: add_in_gpu returned " << err << endl;
 		return false;
 	}
 	return true;
@@ -310,37 +310,29 @@ bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )
 	return true;
 }
 __global__ static void tensor_downsample_kernel_nchw(sample_params params) {
-	int x = threadIdx.x;
-	int index_src_base = 0;
-	int index_dst_base = 0;
+	
+	float* src = params.src_mem;
+	float* dst = params.dst_mem;
 	for (int b = 0; b < params.batchs; b++) {
-		for (int c = 0; c < params.channels; c++, index_src_base += params.src_e2d,
-			index_dst_base += params.dst_e2d) {
+		for (int c = 0; c < params.channels; c++, src += params.src_e2d, dst += params.dst_e2d) {
 			for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
 				int src_y = y * params.stride_h;
+				int dst_off = y * params.dst_width;
 				for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-					int src_x = x * params.stride_w;
-					params.dst_mem[index_dst_base + y * params.dst_width + x] =
-						params.src_mem[index_src_base + src_y * params.src_width + src_x];
-				}
-			}
-		}
-	}
-}
-__global__ static void tensor_downsample_kernel_nhwc(sample_params params) {
-	int x = threadIdx.x;
-	int index_src_base = 0;
-	int index_dst_base = 0;
-	for (int b = 0; b < params.batchs; b++, index_src_base += params.src_e3d,
-		index_dst_base += params.dst_e3d) {
-		for (int y = blockIdx.x; y < params.dst_height; y += gridDim.x) {
-			int src_y = y * params.stride_h;
-			for (int x = threadIdx.x; x < params.dst_width; x += blockDim.x) {
-				int src_x = x * params.stride_w;
-				int dst_p = (index_dst_base + y * params.dst_width + x) * params.channels;
-				int src_p = (index_src_base + src_y * params.src_width + src_x) * params.channels;
-				for (int c = 0; c < params.channels; c++) {
-					params.dst_mem[dst_p + c] = params.src_mem[src_p + c];
+					int src_x = x * params.stride_w; 
+					int dst_i = dst_off + x;
+					dst[dst_i] = 0.0f;
+				 
+					for (int i = src_y + params.stride_h - 1; i >= src_y; i--) {
+						int src_off = i * params.src_width;
+						for (int j = src_x + params.stride_w - 1; j >= src_x; j--) {
+							/*if (b == 0 && c == 0 && x == 3 && y == 4) {
+								printf("i: %d,j:%d,dst_i:%d, src_i:%d, src:%f, dst:%f\n",
+									i, j, dst_i, src_off + j, dst[dst_i], src[src_off + j]);
+							}*/
+							dst[dst_i] += src[src_off + j];
+						}
+					}
 				}
 			}
 		}
@@ -359,8 +351,8 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 		return false;
 	}
 
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize(r_height);
+	int b = GPUBlockSize(r_width);
 
 	sample_params params = {
 		gpu_data , width, height, elements_2d, elements_3d,
@@ -368,8 +360,11 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 		batch, channels,stride_w,stride_h, 1.0, 1.0 };
 	if (order == TO_NCHW)
 		tensor_downsample_kernel_nchw <<<g, b>>>(params);
-	else
-		tensor_downsample_kernel_nhwc <<<g, b>>>(params);
+	else {
+		//TODO: finish downsample under NHWC case
+		return false;
+	}
+	 
 	cudaError_t err = cudaDeviceSynchronize();
 
 	if (err != cudaSuccess) {

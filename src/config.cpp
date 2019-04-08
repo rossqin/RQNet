@@ -85,8 +85,8 @@ bool AppConfig::Load(const char * filename, bool training) {
 		if (NULL == te) return false;
 
 		freezeConvParams = te->BoolAttribute("freeze-conv");
-		freezeBNParams = te->BoolAttribute("freeze-activation");
-		freezeActParams = te->BoolAttribute("freeze-batchnorm");
+		freezeActParams = te->BoolAttribute("freeze-activation");
+		freezeBNParams = te->BoolAttribute("freeze-batchnorm");
 
 		dataset_name = te->GetText("dataset");
 		te->QueryIntText("termination", stop_interation);
@@ -199,8 +199,11 @@ bool AppConfig::GetWeightsPath(uint32_t it, string & filename) const {
 				return false;
 			}
 		}
-		
-		os << out_dir << weight_file_prefix << it << ".rqweights";
+		char ch = out_dir[out_dir.length() - 1];
+		if(ch == '/' || ch == '\\')
+			os << out_dir << weight_file_prefix << it << ".rqweights";
+		else
+			os << out_dir << "/" << weight_file_prefix << it << ".rqweights";
 		filename = os.str();
 		return true;
 	}

@@ -293,12 +293,12 @@ bool YoloModule::Forward(ForwardContext& context) {
 		
 		if (class_count > 0) {
 			avg_cat /= class_count;			
-			oss << setprecision(4) << "Avg IoU: " << avg_iou << ", cls: " << avg_cat << ", obj:" << avg_obj 
-			 << ", No Obj: "<< avg_anyobj <<",Recall: "<< recall <<"(50%), "<< recall75 <<"(75%).\n" ;
+			oss << setprecision(4) << " Avg IoU: " << avg_iou << ", cls: " << avg_cat << ", obj:" << avg_obj 
+			 << ", No Obj: "<< avg_anyobj <<", Recall: "<< recall <<"(50%), "<< recall75 <<"(75%).\n" ;
 		}
 		else {
-			oss << setprecision(4) << "Avg IoU: " << avg_iou << ", obj:" << avg_obj
-				<< ", No Obj: " << avg_anyobj << ",Recall: " << recall << "(50%), " << recall75 << "(75%).\n";
+			oss << setprecision(4) << " Avg IoU: " << avg_iou << ", obj:" << avg_obj
+				<< ", No Obj: " << avg_anyobj << ", Recall: " << recall << "(50%), " << recall75 << "(75%).\n";
 			 
 			 
 		}

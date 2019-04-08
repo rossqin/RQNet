@@ -37,7 +37,7 @@ public:
 	FloatTensor4D * GetParameter(const string& key);
 	bool Load(const char* filename);
 	bool Save(const char* filename);
-	bool TransformDarknetWeights(const string& cfg, const string& filename,const string& out_filename);
+	bool TransformDarknetWeights(const char* cfg, const char* filename,const char* out_filename);
 	 
 
 };

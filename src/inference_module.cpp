@@ -125,7 +125,8 @@ bool InferenceModule::DistributeDeltas(FloatTensor4D & delta) {
 	if (n < 2) return true;
 	 
 	 
-	float* src = delta.GetMem();
+	float* d = delta.GetMem();
+	float* d_end = d + delta.MemElements();
 	for (int i = 0; i < n; i++) {
 		InferenceModule* module =prevs[i];
 		unsigned char* input_gpu = NULL; 
@@ -136,14 +137,19 @@ bool InferenceModule::DistributeDeltas(FloatTensor4D & delta) {
 			cerr << "Error: DistributeDeltas failed in `"<<name <<"` !\n "  ;
 			return false;
 		}
-	 
-		for (int j = 0; j < delta.GetBatch(); j++) {
-			if (!add_in_gpu(sd.GetMem() + j * sd.Elements3D(),
-				src + j * delta.Elements3D() , sd.Elements3D())) {
-				return false;
+		float *dst = sd.GetMem();
+		float *dst_end = dst + sd.MemElements();
+		for (int b = 0; b < delta.GetBatch(); b++ , dst += sd.Elements3D()) {
+			float* src = d + b * delta.Elements3D();
+			if (dst > dst_end || src > d_end) {
+				cout << "out of bound!\n";
+				break;
 			}
-			src += sd.Elements3D();
+			if (!add_in_gpu(dst, src, sd.Elements3D())) {
+				return false;
+			}			
 		} 
+		d += sd.Elements3D();
 	}
 	delta.Release();
 	FloatTensor4D& o = prevs[0]->output;
@@ -257,7 +263,7 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 		cerr << "Error: Forwarding failed in `" << name <<  "`. Error code :" << (int)status << endl;
 		return false;
 	}
-	if (bias.GetChannels()!= 0) {
+	if (bias.GetChannels()!= 0) {		
 		return output.Add(bias);
 	}
 	return true;
@@ -317,16 +323,18 @@ bool ConvolutionalModule::Backward(FloatTensor4D & delta){
 bool ConvolutionalModule::UpdateParams(float lr) {
 	AppConfig& cfg = GetAppConfig(); 
 	if (cfg.ConvParamsFreezed()) return true;
+	float m = cfg.Momentum();
 	if (cfg.UpdateStrategy() == "SGD") {
 
 		if (bias.GetChannels() != 0) { 
+			//if (!dbias.AddScale(bias,-cfg.Decay())) return false;
 			if (!bias.AddScale(dbias, lr)) return false;
-			if (!dbias.Mul(cfg.Momentum())) return false;
+			 if (!dbias.Mul(m)) return false;
 		}
 
 		if (!dw.AddScale(w, -cfg.Decay())) return false;
-		if (!w.AddScale(dw, lr)) return false;
-		if (!dw.Mul(cfg.Momentum())) return false;
+		if (!w.AddScale(dw, lr)) return false;		 
+		if (!dw.Mul(m)) return false;
 		
 	}
 	return true;
@@ -395,19 +403,7 @@ bool PoolingModule::InitDescriptors(bool trainning) {
 		cudaMalloc(&indexes, input.MemElements() * sizeof(int));
 	}
 	if (!output.Init(b, c, w, h, input.GetOrder())) return false;
-	 
-	/*int out_w = (input.GetWidth() + params.padding_w - params.size_w) / params.stride_w + 1;
-	int out_h = (input.GetHeight() + params.padding_h - params.size_h) / params.stride_h + 1;
- 
-	if(!output.Init(input.GetBatch(),output_channels,out_w, out_h, input.GetOrder()))
-		return false;
-	if (params.indexes) {
-		cudaFree(params.indexes);
-		params.indexes = NULL;
-	}
-	if (trainning && mode == CUDNN_POOLING_MAX) {
-		return cudaSuccess == cudaMalloc(&(params.indexes), output.MemElements() * sizeof(int));
-	}*/
+	
 	return true;
 }
 
@@ -460,7 +456,29 @@ PoolingModule::~PoolingModule() {
 	if (indexes) cudaFree(indexes);
 }
 extern bool forward_one_stride_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* indexes, int window_w, int window_h);
+void dump_gpu_data(const string& filename ,int* data, int width, int height) {
+	int s = width * height;
+	int* buffer = new int[s];
+	memset(buffer, 0, sizeof(int) * s);
+	 
+	cudaMemcpy(buffer, data , s * sizeof(int), cudaMemcpyDeviceToHost);
+	 
+	ofstream f(filename, ios::trunc);
+	if (f.is_open()) {
+		char temp[20]; 
+		int i = 0;
+		for (int y = 0; y < height; y++) {
+			f << endl;
+			for (int x = 0; x < width; x++, i++) {
+				sprintf(temp, "%d ", buffer[i]);
+				f << setw(6) << temp;
+			}
+		}
 
+		f.close();
+	}
+	delete[]buffer;
+}
 bool PoolingModule::Forward(ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false;
 	//fix: stride == 1 
@@ -474,15 +492,17 @@ bool PoolingModule::Forward(ForwardContext & context) {
 	else {
 		if(!forward_one_stride_maxpool(output, input, indexes, window_w, window_h))
 			return false; 
-		//input.DumpToFile("input.txt", 0, 0);
-		//output.DumpToFile("output.txt", 0, 0);
+		//dump_gpu_data(name + ".forward.indexes.txt", indexes, input_width, input_height);
 		//return false;
 	}
+	//input.DumpToFile(name + ".forward.before.txt");
+	//output.DumpToFile(name + ".forward.after.txt");
 	return true;
 }
 extern bool backward_one_stride_maxpool(FloatTensor4D& delta, int* indexes);
 bool PoolingModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
+	//delta.DumpToFile(name + ".backward.before.txt");
 	if (stride_w != 1 && stride_h != 1) {
 		FloatTensor4D dy(delta);
 		delta.Release();
@@ -498,6 +518,7 @@ bool PoolingModule::Backward(FloatTensor4D & delta) {
 		if(!backward_one_stride_maxpool(delta, indexes))
 			return false;
 	}
+	//delta.DumpToFile(name + ".backward.after.txt");
 	return DistributeDeltas(delta);
 }
 
@@ -537,6 +558,7 @@ BatchNormModule::BatchNormModule(const XMLElement * element, Layer * l, TensorOr
 	cudnnCreateTensorDescriptor(&x_desc);	
 	cudnnCreateTensorDescriptor(&y_desc);	
 	cudnnCreateTensorDescriptor(&t_desc);
+	freezed = false;
 	/*if (t_desc) {
 		if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(t_desc,
 			CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, input_channels, 1, 1)) {
@@ -579,7 +601,8 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 	float* running_mu = gamma + output_channels;
 	float* running_var = running_mu + output_channels;
 	cudnnStatus_t status;
-	if (context.training && !context.freezeBNParams) {
+	freezed = context.freezeBNParams;
+	if (context.training) {
 		status = cudnnBatchNormalizationForwardTraining(
 			GetCUDNNHandle(),
 			CUDNN_BATCHNORM_SPATIAL,
@@ -636,8 +659,10 @@ bool BatchNormModule::Backward(FloatTensor4D & delta) {
 		delta.GetChannels(),
 		delta.GetHeight(),
 		delta.GetHeight(),delta.GetOrder() ) ) return false; 
-	float* beta = params.GetMem();
-	float* gamma = beta + params.GetChannels();
+	float* beta = params.GetMem(); 
+	float* gamma = beta + output_channels;
+	//float* running_mu = gamma + output_channels;
+	//float* running_var = running_mu + output_channels;
 	cudnnStatus_t status = cudnnBatchNormalizationBackward(
 		GetCUDNNHandle(),
 		CUDNN_BATCHNORM_SPATIAL,
@@ -656,7 +681,7 @@ bool BatchNormModule::Backward(FloatTensor4D & delta) {
 		gamma_update,
 		beta_update,
 		BN_MIN_EPSILON,
-		mu,
+		 mu,
 		var);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: Normalizer back warding failed in `"
@@ -668,12 +693,11 @@ bool BatchNormModule::Backward(FloatTensor4D & delta) {
 }
 bool BatchNormModule::UpdateParams(float lr) {
 	AppConfig& cfg = GetAppConfig();
-	if (cfg.BNParamsFreezed()) return true;
-	int channels = params.GetChannels();
+	if (freezed) return true; 
 	float* beta = params.GetMem();
-	float* gamma = beta + channels;
-	float* running_mu = gamma + channels;
-	float* running_var = running_mu + channels;
+	float* gamma = beta + output_channels;
+	float* running_mu = gamma + output_channels;
+	float* running_var = running_mu + output_channels;
 
 	/*
 	float* mu;
@@ -683,29 +707,30 @@ bool BatchNormModule::UpdateParams(float lr) {
 	*/
 	float decay = cfg.Decay();
 	
-	size_t bytes = sizeof(float) * channels;
-	float* beta_cpu = New float[channels];
+	size_t bytes = sizeof(float) * output_channels;
+	float* beta_cpu = New float[output_channels];
 	cudaMemcpy(beta_cpu, beta, bytes, cudaMemcpyDeviceToHost);
 
 
-	float* gamma_cpu = New float[channels];
+	float* gamma_cpu = New float[output_channels];
 	cudaMemcpy(gamma_cpu, gamma, bytes, cudaMemcpyDeviceToHost);
 
-	float* beta_update_cpu = New float[channels];
+	float* beta_update_cpu = New float[output_channels];
 	cudaMemcpy(beta_update_cpu, beta_update, bytes, cudaMemcpyDeviceToHost);
 
 
-	float* gamma_update_cpu = New float[channels];
+	float* gamma_update_cpu = New float[output_channels];
 	cudaMemcpy(gamma_update_cpu, gamma_update, bytes, cudaMemcpyDeviceToHost);
 	if (cfg.UpdateStrategy() == "SGD") {
-		for (int i = 0; i < channels; i++) {
-			beta_update_cpu[i] -= decay * beta_cpu[i];
+		float m = cfg.Momentum();
+		for (int i = 0; i < output_channels; i++) {
+			//beta_update_cpu[i] -= decay * beta_cpu[i];
 			beta_cpu[i] += lr * beta_update_cpu[i];
-			beta_update_cpu[i] *= cfg.Momentum();
+			beta_update_cpu[i] *= m;
 
-			gamma_update_cpu[i] -= decay * gamma_cpu[i];
+			//gamma_update_cpu[i] -= decay * gamma_cpu[i];
 			gamma_cpu[i] += lr * gamma_update_cpu[i];
-			gamma_update_cpu[i] *= cfg.Momentum();
+			gamma_update_cpu[i] = m;
 
 		}
 	}
@@ -750,14 +775,19 @@ ActivationModule::ActivationModule(const XMLElement* element, Layer* l, TensorOr
 bool ActivationModule::Forward(ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false;
 	output = input;
-	return activate_array_ongpu(output.GetMem(),output.MemElements(),atype);
+	//output.DumpToFile(name + ".forward.before.txt");
+	bool ret = activate_array_ongpu(output.GetMem(),output.MemElements(),atype);
+	//output.DumpToFile(name + ".forward.after.txt");
+	return ret;
 }
 
 bool ActivationModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
 	if (!output.SameDememsion(delta)) return false;
+	//delta.DumpToFile(name + ".backward.before.txt");
 	if (!gradient_array_ongpu(output.GetMem(),delta.GetMem(),output.MemElements(), atype))
 		return false ;
+	//delta.DumpToFile(name + ".backward.after.txt");
 	return DistributeDeltas(delta);
 }
 
@@ -784,18 +814,18 @@ bool UpSampleModule::InitDescriptors(bool training) {
 
 bool UpSampleModule::Forward( ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false; 
-	return input.UpSample(output,stride_w,stride_h);
+	//input.DumpToFile(name + ".forward.before.txt");
+	bool ret = input.UpSample(output,stride_w,stride_h);
+	//output.DumpToFile(name + ".forward.after.txt");
+	return ret;
 }
 
 bool UpSampleModule::Backward(FloatTensor4D & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
+	//delta.DumpToFile(name + ".backward.before.txt");
 	if(!delta.DownSample(input,stride_w,stride_h)) return false;
-	delta = input;
-	if (prevs.size() > 1) {
-		for (size_t i = 1; i < prevs.size(); i++) {
-			if (prevs[i]->UpdateShortcutDelta(delta)) return false;
-		}
-	}
+	delta = input; 
+	//delta.DumpToFile(name + ".backward.after.txt");
 	return DistributeDeltas(delta);
 }
 

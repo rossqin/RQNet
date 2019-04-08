@@ -148,7 +148,7 @@ bool CNNNetwork::Backward() {
 	FloatTensor4D d;
 	for (int i = layers.size() - 1; i >= 0; i--) { 
 		if (!layers[i]->Backward(d)) {
-			cerr << "Backwarf failed at " << layers[i]->GetName() << endl;
+			cerr << "Backward failed at " << layers[i]->GetName() << endl;
 			return false;
 		}
 	}
@@ -162,6 +162,10 @@ bool CNNNetwork::Train() {
 	}
 	
 	DataLoader loader;
+
+	string filename("loss_");
+	filename += get_time_str();
+	filename += ",log";
 
 	uint32_t it;
 	if (GetAppConfig().FromFirstIteration())
@@ -177,7 +181,11 @@ bool CNNNetwork::Train() {
 		loss = 0.0;
 		clock_t start_clk = clock();
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) {
+			cout << "\nSubdivision " << i <<": loading data ... "  ;
+			long t = GetTickCount();
 			if (!loader.MiniBatchLoad(input, truths)) return false; 
+			t = GetTickCount() - t;
+			cout << "took " << (t * 0.001) << " secs.\n";
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;  
 		}
@@ -189,23 +197,32 @@ bool CNNNetwork::Train() {
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
 		float lr = GetAppConfig().GetCurrentLearningRate(it);
 		cout << "\nIter " << it << ", loss : " << loss <<", avg-loss: "<< avg_loss 
-			<<", rate: " << lr << ", time: " << (ms * 0.001) << " s , "
+			<<", rate: " << lr << ", time: " << (ms * 0.001) << "s, "
 			<< it * GetAppConfig().GetBatch() << " images processed.\n";
 		//TODO: save 
-		lr /= GetAppConfig().GetBatch();
+		ofstream ofs(filename,ios::app);
+		if (ofs.is_open()) {
+			ofs << setw(10) << it << ", " <<  input.GetWidth()<< ", " << input.GetHeight()<< ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
+			ofs.close();
+		}
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
-		}
-		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
-			(new_width != input.GetWidth() || new_height != input.GetHeight()) ) {
-			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
-			if (!input.Init(GetAppConfig().GetMiniBatch(), input.GetChannels(),
-				new_width, new_height, input.GetOrder()))  
-				return false;
 		}
 		if (GetAppConfig().GetWeightsPath(it, weights_file)) {
 			GetParamPool().Save(weights_file.c_str());
 		}
+		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
+			(new_width != input.GetWidth() || new_height != input.GetHeight()) ) {
+			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
+			cudaError_t err = cudaPeekAtLastError();
+			if (err != cudaSuccess) {
+				cerr << "cuda Error:" << (int)err << endl;
+			}
+			if (!input.Init(GetAppConfig().GetMiniBatch(), input.GetChannels(),
+				new_width, new_height, input.GetOrder())) {
+				return false;
+			}
+		}		
 		it++;
 	}
 	//TODO : save final 

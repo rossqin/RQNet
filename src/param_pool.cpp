@@ -157,9 +157,9 @@ struct DarknetLayer {
 	char last_module[40];
 	char anchors[40];
 };
-bool ParamPool::TransformDarknetWeights(const string& cfg, const string& filename, const string& out_filename) {
-	fstream netfile(cfg.c_str(), ios::in);
-	ifstream weightsfile(filename.c_str(), ios::binary);
+bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, const char* out_filename) {
+	fstream netfile(cfg , ios::in);
+	ifstream weightsfile(filename , ios::binary);
 	int layer_index = 0;
 	if (!netfile.is_open() || !weightsfile.is_open()) return false;
  
@@ -431,8 +431,8 @@ bool ParamPool::TransformDarknetWeights(const string& cfg, const string& filenam
 	netfile.close(); 
 	weightsfile.close();
 	bool r;
-	if(out_filename.length() > 0 )
-		 r = Save(out_filename.c_str());
+	if(out_filename != NULL && 0 != *out_filename )
+		 r = Save(out_filename);
 	else {
 		string outname(filename);
 		replace_extension(outname, ".rweights");
