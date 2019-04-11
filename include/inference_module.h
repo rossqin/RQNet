@@ -17,11 +17,12 @@ protected:
 	
 	cudnnTensorDescriptor_t x_desc, y_desc;
 	Layer* layer;
-	string name;
+	
 	vector<InferenceModule*> prevs;
 	void GetPrevModules(const XMLElement* element);	 
 	virtual bool InitDescriptors(bool trainning) { return true; }
 public:
+	string name;
 	FloatTensor4D input;
 	FloatTensor4D output;
 	FloatTensor4D shortcut_delta;

@@ -118,10 +118,18 @@ bool InferenceModule::Backward(FloatTensor4D & delta) {
 	if (delta.SameDememsion(shortcut_delta)) {
 		return delta.Add(shortcut_delta);
 	}
+	
 	return true;
 }
 bool InferenceModule::DistributeDeltas(FloatTensor4D & delta) {
 	int n = prevs.size();
+#if 0
+	char filename[MAX_PATH];
+	if (this == layer->last_module) { 
+		sprintf(filename, "E:\\AI\\Data\\debugging\\RQNet\\%s.backward.bin", layer->GetName().c_str());
+		delta.SaveBatchData(filename, -1);
+	}
+#endif
 	if (n < 2) return true;
 	 
 	 
@@ -243,6 +251,7 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element, Layer * l, 
 
 bool ConvolutionalModule::Forward(ForwardContext & context) {
 	
+ 
 	if (!InferenceModule::Forward(context)) return false; 
 	
 	cudnnStatus_t status = cudnnConvolutionForward(
@@ -263,23 +272,23 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 		cerr << "Error: Forwarding failed in `" << name <<  "`. Error code :" << (int)status << endl;
 		return false;
 	}
-	if (bias.GetChannels()!= 0) {		
-		return output.Add(bias);
+	if (bias.GetChannels()!= 0) { 
+		return output.Add(bias); 
 	}
 	return true;
 }
-
+extern bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size);
 bool ConvolutionalModule::Backward(FloatTensor4D & delta){
+ 
 	if (!InferenceModule::Backward(delta)) return false;
 	cudnnHandle_t handle = GetCUDNNHandle();
 	cudnnStatus_t status;
+	delta.SaveBatchData("E:\\AI\\Data\\debugging\\RQNet\\conv_backward_start.bin",-1);
+
 	if (bias.GetChannels() != 0) {
-		status = cudnnConvolutionBackwardBias(handle, &one, y_desc, delta.GetMem(), &one, db_desc, dbias.GetMem());
-		if (CUDNN_STATUS_SUCCESS != status) {
-			cerr << "Error: backward bias failed in`" << name << "`. Error code :" << (int)status << endl;
-			return false;
-		}
+		cudnnConvolutionBackwardBias(handle, &one, y_desc, delta.GetMem(), &one, db_desc, dbias.GetMem());
 	}
+	//delta.SaveBatchData("E:\\AI\\Data\\debugging\\RQNet\\odelta.bin",-1);
 	status = cudnnConvolutionBackwardFilter(handle,
 		&one, x_desc, 
 		input.GetMem(),
@@ -296,7 +305,7 @@ bool ConvolutionalModule::Backward(FloatTensor4D & delta){
 		cerr << "Error: backward filter failed in`" << name << "`. Error code :" << (int)status << endl; 
 		return false;
 	}
-	
+	dw.SaveBatchData("E:\\AI\\Data\\debugging\\RQNet\\dweights.bin",-1);
 	if (prevs.size() > 0) {
 		status = cudnnConvolutionBackwardData(handle,
 			&one, 
@@ -316,7 +325,9 @@ bool ConvolutionalModule::Backward(FloatTensor4D & delta){
 			return false;
 		} //*/ 
 		delta = input;
+		//delta.SaveBatchData("E:\\AI\\Data\\debugging\\RQNet\\delta.bin");
 	}
+ 
 	return DistributeDeltas(delta); 
 }
 
@@ -457,12 +468,16 @@ extern bool forward_maxpool(FloatTensor4D& output, const FloatTensor4D& input, i
 extern bool backward_maxpool(FloatTensor4D& prev_delta, const FloatTensor4D& delta, int* indexes, int window_w, int window_h, int pad_w, int pad_h, int stride_w, int stride_h);
 
 bool PoolingModule::Forward(ForwardContext & context) {
-	//TODO: implements the NHWC version
-	if (context.input.GetOrder() != TO_NCHW) return false;
-	if (!InferenceModule::Forward(context)) return false;
-
-	if (!forward_maxpool(output, input, indexes, window_w, window_h, pad_w, pad_h, stride_w, stride_h))
+	//TODO: implements the NHWC version 
+	if (!InferenceModule::Forward(context)) {
+		cerr << "InferenceModule::Forward failed in Pool Module \n";
 		return false;
+	}
+
+	if (!forward_maxpool(output, input, indexes, window_w, window_h, pad_w, pad_h, stride_w, stride_h)) {
+		cerr << "forward_maxpool failed in Pool Module \n";
+		return false;
+	}
 	//input.DumpToFile(name + ".fwd.01.txt");
 	//output.DumpToFile(name + ".fwd.02.txt");
 	
@@ -550,16 +565,32 @@ bool BatchNormModule::InitDescriptors(bool trainning) {
 	return output.Init(b, output_channels, h, w, input.GetOrder());
 }
 const float AVERAGE_MOVING_FACTOR = 0.01f;
-const float BN_MIN_EPSILON = 1.0e-5;
+ 
 bool BatchNormModule::Forward(ForwardContext & context) {
+	cudaError_t e = cudaPeekAtLastError();
+	if (e != cudaSuccess) {
+		cerr << "cudaError! code:" << e << endl;
+		return false;
+	}
 	if (!InferenceModule::Forward(context)) return false;
+	e = cudaPeekAtLastError();
+	if (e != cudaSuccess) {
+		cerr << "cudaError! code:" << e << endl;
+		return false;
+	}
 	 
-	float* beta = params.RestoreDataFromCPU();
+	float* beta = params.GetMem();
+	
 	float* gamma = beta + output_channels;
 	float* running_mu = gamma + output_channels;
 	float* running_var = running_mu + output_channels;
 	cudnnStatus_t status;
 	freezed = context.freezeBNParams;
+	e = cudaPeekAtLastError();
+	if (e != cudaSuccess) {
+		cerr << "cudaError! code:" << e << endl;
+		return false;
+	}
 	if (context.training) {
 		status = cudnnBatchNormalizationForwardTraining(
 			GetCUDNNHandle(),
@@ -576,7 +607,7 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 			AVERAGE_MOVING_FACTOR,
 			running_mu,
 			running_var,
-			BN_MIN_EPSILON,
+			CUDNN_BN_MIN_EPSILON,
 			mu,
 			var);
 		//float* output_cpu = New float[output.MemElements()];
@@ -600,7 +631,7 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 			beta,
 			running_mu,
 			running_var,
-			BN_MIN_EPSILON);
+			CUDNN_BN_MIN_EPSILON);
 	}
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "batch normalization failed in `" << name << "`. Error code :" << (int)status << endl;
@@ -610,6 +641,19 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 }
 
 bool BatchNormModule::Backward(FloatTensor4D & delta) {
+	char filename[MAX_PATH];
+	if (name == "layer20.normalization") {
+		sprintf(filename, "E:\\AI\\Data\\debugging\\RQNet\\%s.backward.before.bin", name.c_str());
+		int bytes = delta.Elements3D() * sizeof(float);
+		ofstream of(filename, ios::binary | ios::trunc);
+		if (of.is_open()) {
+			char* data = new char[bytes];
+			cudaMemcpy(data, delta.GetMem(), bytes, cudaMemcpyDeviceToHost);
+			of.write(data, bytes);
+			of.close();
+		}
+	}
+
 	if (!InferenceModule::Backward(delta)) return false;
 	// this function will not be invoked during testing phase
 	FloatTensor4D dx;
@@ -619,6 +663,9 @@ bool BatchNormModule::Backward(FloatTensor4D & delta) {
 		delta.GetHeight(),delta.GetOrder() ) ) return false; 
 	float* beta = params.GetMem(); 
 	float* gamma = beta + output_channels;
+	
+	
+
 	//float* running_mu = gamma + output_channels;
 	//float* running_var = running_mu + output_channels;
 	cudnnStatus_t status = cudnnBatchNormalizationBackward(
@@ -638,7 +685,7 @@ bool BatchNormModule::Backward(FloatTensor4D & delta) {
 		gamma,
 		gamma_update,
 		beta_update,
-		BN_MIN_EPSILON,
+		CUDNN_BN_MIN_EPSILON,
 		 mu,
 		var);
 	if (CUDNN_STATUS_SUCCESS != status) {
@@ -738,13 +785,38 @@ bool ActivationModule::Forward(ForwardContext & context) {
 	//output.DumpToFile(name + ".forward.after.txt");
 	return ret;
 }
+static void PrintGPUData(const char* filename, float* data, int width, int height) {
+	
+	ofstream of(filename, ios::trunc);
+	if (!of.is_open()) return;
 
+	float* buffer = new float[width * height];
+	char temp[20];
+	cudaMemcpy(buffer, data, width * height * sizeof(float), cudaMemcpyDeviceToHost); 
+	for (int i = 0,index = 0; i < height; i++) {
+		for (int j = 0; j < width; j++ ) {
+			sprintf(temp, "%.6f ", buffer[index++]);
+			of << setw(10) << temp;
+		}
+		of << endl;
+	}
+	delete[]buffer;
+	of.close();
+}
 bool ActivationModule::Backward(FloatTensor4D & delta) {
+	
 	if (!InferenceModule::Backward(delta)) return false;
 	if (!output.SameDememsion(delta)) return false;
 	//delta.DumpToFile(name + ".backward.before.txt");
+	/*if (this->atype == LEAKY) {
+		PrintGPUData("E:\\AI\\Data\\debugging\\RQNet\\actvation.output.txt", output.GetMem(), output.GetWidth(), output.GetHeight());
+		PrintGPUData("E:\\AI\\Data\\debugging\\RQNet\\actvation.delta.before.txt", delta.GetMem(), output.GetWidth(), output.GetHeight());
+	}*/
 	if (!gradient_array_ongpu(output.GetMem(),delta.GetMem(),output.MemElements(), atype))
 		return false ;
+	/*if (this->atype == LEAKY) {
+		PrintGPUData("E:\\AI\\Data\\debugging\\RQNet\\actvation.delta.after.txt", delta.GetMem(), output.GetWidth(), output.GetHeight());
+	}*/
 	//delta.DumpToFile(name + ".backward.after.txt");
 	return DistributeDeltas(delta);
 }

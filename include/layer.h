@@ -19,7 +19,9 @@ protected:
 	int index;
 	string name;
 	vector<InferenceModule*> modules;
+
 public:
+	InferenceModule* last_module;
 	Layer(const XMLElement* element, int i);
 	inline int GetIndex() const { return index; }
 	inline const string& GetName() const { return name; }

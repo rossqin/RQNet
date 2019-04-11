@@ -19,13 +19,11 @@ enum DataType {
 };
 enum TensorOrder;
 class FloatTensor4D {
-protected:
-	bool data_in_gpu;
+protected: 
 	TensorOrder order;
 	size_t bytes;
 	size_t elements;
-	float* gpu_data;
-	float* cpu_data; // allow temporarily move data to cpu.
+	float* gpu_data; 
 	bool fine;
 	int batch;
 	int channels;
@@ -34,10 +32,11 @@ protected:
 	size_t elements_2d;
 	size_t elements_3d;
 public:
-	FloatTensor4D(bool in_gpu = true);
+	FloatTensor4D();
 	FloatTensor4D(const FloatTensor4D& right);
 	virtual ~FloatTensor4D();
-	virtual bool Init(int b, int c, int w, int h, TensorOrder o);
+	bool Init(int b, int c, int w, int h, TensorOrder o);
+	inline bool InitFrom(const FloatTensor4D& right){ return Init(right.batch, right.channels, right.width, right.height, right.order); }
 	bool Release();
 	inline float* GetMem() const { return gpu_data; }
 	inline size_t MemBytes() const { return bytes; }
@@ -51,9 +50,7 @@ public:
 	inline int GetBatch() const { return batch; }
 	inline int GetChannels() const { return channels; }
 	inline int GetHeight() const { return height; }
-	inline int GetWidth() const { return width; }
-
-	inline bool DataInGPU() const { return data_in_gpu; }
+	inline int GetWidth() const { return width; } 
 
 	inline bool IsEmpty() const { return NULL == gpu_data; }
 
@@ -71,6 +68,7 @@ public:
 	bool AddScale(const FloatTensor4D& right, float scale);
 
 	bool Set3DData(int index, const float*  src, bool src_from_cpu = false);
+	bool Get3DData(int index, float*  out, bool to_cpu = true) const;
 
 	void DumpToFile(const string& filename, int b = 0 , int c = 0) const ;
 
@@ -78,11 +76,15 @@ public:
 	bool DownSample(FloatTensor4D& result, int stride_w, int stride_h ) const;
 
 	bool Randomize(float min_ = 0.0f, float max_ = 1.0f);
- 
 
+	bool SaveBatchData(const string& filename, int b = 0);
+ 
+#if 0
 	float* MoveDataToCPU();
 	float* RestoreDataFromCPU();
+#endif
 	bool CopyDataFromCPU(void * data, size_t data_bytes, DataType data_type, uint16_t dims[4]); 
+	char* CopyToCPU() const ;
 
 };
 bool add_in_gpu(float* dest, float* src, int elements);

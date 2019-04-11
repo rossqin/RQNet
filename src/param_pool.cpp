@@ -45,16 +45,11 @@ bool ParamPool::Load(const char * filename) {
 		if (it != uninit_params.end()) {
 			FloatTensor4D* tensor = it->second; 
 			//TODO: check tensor order
-			if (tensor->MemBytes() != data_header.bytes) {
-				char* buf = New char[data_header.bytes];
-				f.read(buf, data_header.bytes);
-				tensor->CopyDataFromCPU(buf, data_header.bytes, data_header.data_type, data_header.dims);
-				delete[]buf;
-			}
-			else {
-				f.read(reinterpret_cast<char*>(tensor->MoveDataToCPU()), data_header.bytes);
-				tensor->RestoreDataFromCPU();
-			}
+			char* buf = New char[data_header.bytes];
+			f.read(buf, data_header.bytes);
+			tensor->CopyDataFromCPU(buf, data_header.bytes, data_header.data_type, data_header.dims);
+			delete[]buf;
+			 
 			params.insert(*it);
 			uninit_params.erase(it); 
 		}
@@ -119,7 +114,9 @@ bool ParamPool::Save(const char * filename) {
 
 		f.write(reinterpret_cast<char*>(&data_header), sizeof(tensor_data_header));
 		written += sizeof(tensor_data_header); 
-		f.write(reinterpret_cast<char*>(tensor->MoveDataToCPU()), tensor->MemBytes()); 
+		char* cpu_data = tensor->CopyToCPU();
+		f.write(cpu_data, tensor->MemBytes());
+		delete[]cpu_data;
 
 		index += (it->first.length() + 1); 
 	}
@@ -336,6 +333,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 		for (DarknetLayer& l : layers) { 
 			if(l.layer_type != DLT_ROUTE) 
 				netfile << "\t\t<layer id=\"" << l.output_id << "\">\n";
+			char* cpu_data = NULL;
 			switch (l.layer_type) {
 			case DLT_CONVOLUTIONAL:
 				
@@ -348,10 +346,11 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					before = "normalization";
 					param_name = l.output_id;
 					param_name += ".normalization";
-					tensor = New FloatTensor4D(false);
+					tensor = New FloatTensor4D();
 					tensor->Init(4, l.filters, 1,1, TO_NCHW);
 					params.insert(pair<string, FloatTensor4D*>(param_name, tensor));
-					weightsfile.read(reinterpret_cast<char*>(tensor->MoveDataToCPU()), tensor->MemBytes());
+					cpu_data = tensor->CopyToCPU();
+					weightsfile.read(cpu_data, tensor->MemBytes());
 					cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
 				}
 				else {
@@ -362,22 +361,24 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					before = "convolution";
 					param_name = l.output_id;
 					param_name += ".convolution.bias";
-					tensor = New FloatTensor4D(false);
+					tensor = New FloatTensor4D();
 					tensor->Init(1, l.filters, 1, 1, TO_NCHW);
 					params.insert(pair<string, FloatTensor4D*>(param_name, tensor));
-					weightsfile.read(reinterpret_cast<char*>(tensor->MoveDataToCPU()), tensor->MemBytes());
+					cpu_data = tensor->CopyToCPU();
+					weightsfile.read(cpu_data, tensor->MemBytes());
 					cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
 				}
 				param_name = l.output_id;
 				param_name += ".convolution.weights";
-				tensor = New FloatTensor4D(false);
+				tensor = New FloatTensor4D();
 				
 				tensor->Init(l.filters, l.channels, l.size, l.size, TO_NCHW);
 				if (param_name == "layer20.weights") {
 					cout << " dim [" << tensor->GetBatch() << ", " << tensor->GetChannels() << ", " << tensor->GetHeight()
 						<< ", " << tensor->GetWidth() << "]\n";
 				}
-				weightsfile.read(reinterpret_cast<char*>(tensor->MoveDataToCPU()), tensor->MemBytes());
+				cpu_data = tensor->CopyToCPU();
+				weightsfile.read(cpu_data, tensor->MemBytes());
 				cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
 				params.insert(pair<string,FloatTensor4D*>(param_name, tensor));
 				netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation 
@@ -421,6 +422,10 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				netfile << "\t\t\t<module id=\"yolo\" type=\"yolo-detection\" before=\"" << before 
 					<< "\" ignore-thresh=\"0.7\" truth-thresh=\"1.0\" anchor-masks=\"" << l.anchors << "\" />\n";
 				before = "";
+			}
+			if (cpu_data) {
+				delete[]cpu_data;
+				cpu_data = NULL;
 			}
 			if (l.layer_type != DLT_ROUTE)
 				netfile << "\t\t</layer>\n";

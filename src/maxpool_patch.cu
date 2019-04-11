@@ -124,6 +124,9 @@ bool forward_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* ind
 	};
 	forward_maxpool_kernel<<<g,b>>>(p, output.MemElements(), threads);
 	cudaError_t e = cudaDeviceSynchronize();
+	if (e != cudaSuccess) {
+		cerr << "e :" << (int)e << endl;
+	}
 	return e == cudaSuccess;
 } 
 

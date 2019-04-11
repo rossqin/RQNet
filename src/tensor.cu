@@ -25,6 +25,7 @@ const FloatTensor4D& FloatTensor4D::operator=(float val) {
 			fine = false;
 		}
 	}
+	fine = true;
 	return *this;
 }
 __global__ static void tensor_add_kernel(float* data, const float* op, int elements, int threads) {
@@ -55,7 +56,7 @@ bool FloatTensor4D::Add(const FloatTensor4D& right) {
 		return true;
 	}
 	if (NULL == gpu_data) {
-		this->operator=(right);
+		this->operator=(right); 
 		return fine;
 	} 
 	
@@ -70,8 +71,10 @@ bool FloatTensor4D::Add(const FloatTensor4D& right) {
 		int b = GPUBlockSize(channels);
 		tensor_add_kernel_ex <<<g, b >>> (gpu_data, right.gpu_data, batch, channels ,elements_2d);
 	}		 
-	else
+	else {
+		cerr << "Not compatible!\n";
 		return false;
+	}
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {
 		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
@@ -424,4 +427,53 @@ bool FloatTensor4D::Randomize(float min_, float max_) {
 	tensor_random_kernel <<<g, b >>>(gpu_data, elements, g * b, GetTickCount(), min_, max_);
 	cudaError_t err = cudaDeviceSynchronize();
 	return (err == cudaSuccess);
-} 
+}
+ 
+__global__ void backward_bias_kernel(float *bias_updates, float *delta, int batch, int channels, int size) {
+	for (int c = blockIdx.x; c < channels; c += gridDim.x) {
+		for (int b = threadIdx.x; b < batch; b += blockDim.x) {			
+			int channel_index = b * channels + c;			
+			int data_offset = channel_index * size; 
+			float* data = delta + data_offset;
+			for (int i = 0; i < size; i++) {
+				bias_updates[c] += data[i];
+			}
+		}
+	}
+}
+bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size) {
+	int g = GPUGridSize(99999);
+	int b = GPUBlockSize(99999);
+	backward_bias_kernel <<<g,b>>>(bias_updates, delta, batch, channels, size);
+	cudaError_t err = cudaDeviceSynchronize();
+	return err == cudaSuccess;
+}
+ 
+/*
+#define BLOCK 512
+__global__ void backward_bias_kernel(float *bias_updates, float *delta, int batch, int n, int size)
+{
+	__shared__ float part[BLOCK];
+	int i, b;
+	int filter = blockIdx.x;
+	int p = threadIdx.x;
+	float sum = 0;
+	for (b = 0; b < batch; ++b) {
+		for (i = 0; i < size; i += BLOCK) {
+			int index = p + i + size*(filter + n*b);
+			sum += (p + i < size) ? delta[index] : 0;
+		}
+	}
+	part[p] = sum;
+	__syncthreads();
+	if (p == 0) {
+		for (i = 0; i < BLOCK; ++i) bias_updates[filter] += part[i];
+	}
+}
+bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size)
+{
+	backward_bias_kernel <<<channels, BLOCK >>>(bias_updates, delta, batch, channels, size);
+	cudaError_t err = cudaDeviceSynchronize();
+	return err == cudaSuccess;
+}
+*/

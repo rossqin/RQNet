@@ -136,11 +136,12 @@ bool CNNNetwork::Forward(bool training) {
 		input,
 		GetAppConfig().GetMaxTruths(),
 		truths };
-	for (auto l : layers) {
-		if (!l->Forward(context)) {
-			cerr << "Forward failed : index: " << l->GetIndex() << " , name :" << l->GetName() << endl;
+	for (int i = 0; i < (int)layers.size(); i++) {
+		if (!layers[i]->Forward(context)) {
+			cerr << "Forward failed : index: " << i << " , name :" << layers[i]->GetName() << endl;
 			return false;
 		}
+		
 	}
 	return true;
 }
@@ -170,7 +171,7 @@ bool CNNNetwork::Train() {
 
 	uint32_t it;
 	if (GetAppConfig().FromFirstIteration())
-		it = 0;
+		it = 1001;
 	else
 		it = GetParamPool().GetIteration();
 
@@ -178,20 +179,60 @@ bool CNNNetwork::Train() {
 	int new_width, new_height;
 	string weights_file;
 	float avg_loss = -1.0;
+	
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
 		clock_t start_clk = clock();
+		char dbg_filename[MAX_PATH];
+		ifstream fi;
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) {
 			cout << "\nSubdivision " << i <<": loading data ... "  ;
 			long t = GetTickCount();
+			sprintf(dbg_filename, "data_subd_%d_input.dat", i);
+			
+			fi.open(dbg_filename, ios::binary);
+			if (!fi.is_open()) return false;
+			char* data = new char[input.MemBytes()];
+			fi.read(data, input.MemBytes());
+			fi.close();
+			if (cudaSuccess != cudaMemcpy(input.GetMem(), data, input.MemBytes(), cudaMemcpyHostToDevice)) {
+				delete[]data;
+				return false;
+			}
+			sprintf(dbg_filename, "data_subd_%d_truths.dat", i);
+			fi.open(dbg_filename, ios::binary);
+			if (!fi.is_open()) return false;
+			fi.read(reinterpret_cast<char*>(truths),
+				GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo));
+			fi.close();
+
+#if 0
 			if (!loader.MiniBatchLoad(input, truths)) return false; 
+
+			sprintf(dbg_filename, "data_subd_%d_input.dat", i);
+			char* data = input.CopyToCPU();
+			of.open(dbg_filename, ios::binary | ios::trunc);
+			if (of.is_open()) {
+				of.write(data, input.MemBytes());
+				of.close();
+			}
+			delete[]data;
+			sprintf(dbg_filename, "data_subd_%d_truths.dat", i);
+			of.open(dbg_filename, ios::binary | ios::trunc);
+			if (of.is_open()) {
+				of.write(reinterpret_cast<char*>(truths), 
+					GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo));
+				of.close();
+			}
+			
+#endif
 			t = GetTickCount() - t;
 			cout << " in " << (t * 0.001) << " secs.\n";
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;  
 		}
 		
-		loss /= GetAppConfig().GetBatch();
+		loss /= GetAppConfig().GetBatch(); 
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else

@@ -182,7 +182,7 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 	stbi_uc* io_buffer = NULL;
 	size_t size = 0;
 	unsigned int start_t = GetTickCount();
-	ifstream file(filename, ios::binary);
+	/*ifstream file(filename, ios::binary);
 	if (file.is_open()) {
 		file.seekg(0, ios_base::end);
 		size = file.tellg();
@@ -199,10 +199,11 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 		file.close();
 	}
 	//stbi_load_from_memory
-	//long t1 = GetTickCount();
-	stbi_uc *buff = stbi_load_from_memory(io_buffer, size, &width, &height, &channels, c);
-	delete[]io_buffer;
-	
+	//long t1 = GetTickCount();*/
+	//stbi_uc *buff = stbi_load_from_memory(io_buffer, size, &width, &height, &channels, c);
+
+	//delete[]io_buffer;
+	stbi_uc *buff = stbi_load(filename, &width, &height, &channels, c);
 	
 	if (!buff) {
 		cerr << "Cannot load image `" << filename << "`\nSTB Reason: " << stbi_failure_reason() << endl;
@@ -236,6 +237,7 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 		delete[]buff;
 		return false;
 	}
+	delete[]buff;
 	bool ret = hwc_uc_2_chw_float(gpu_data, temp, width, height, channels, norm);
 	cudaFree(temp);
 	
