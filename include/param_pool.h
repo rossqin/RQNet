@@ -28,15 +28,16 @@ protected:
 	map<string, FloatTensor4D*> uninit_params;
 	map<string, FloatTensor4D*> params;
 	TensorOrder tensor_order; // TO_NCHW by default
-public:
 	uint32_t iteration;
+public:
+	
 	ParamPool() { tensor_order = TO_NCHW; release_mem = false; }
 	~ParamPool();
 	inline uint32_t GetIteration() const { return iteration; }
 	void Put(string key, FloatTensor4D* tensor);
 	FloatTensor4D * GetParameter(const string& key);
 	bool Load(const char* filename);
-	bool Save(const char* filename);
+	bool Save(const char* filename,int i = -1);
 	bool TransformDarknetWeights(const char* cfg, const char* filename,const char* out_filename);
 	 
 

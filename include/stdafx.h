@@ -38,6 +38,7 @@
 
 #include <stdint.h>
 
+
 const float EPSILON = 0.00001f;
 using namespace std;
 
@@ -71,4 +72,6 @@ void dump_mem(float* data, int n);
 void split_string(vector<string>& result, const string& str, char ch = ',');  
 const char* replace_extension(string& str, const char* new_ext);
 void show_usage(const char* bin);
+#define FULL_DEBUGGING 1
+#define DEBUGGING_DIR "\\AI\\Data\\debugging\\RQNet\\"
 #endif

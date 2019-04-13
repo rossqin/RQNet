@@ -71,7 +71,7 @@ bool ParamPool::Load(const char * filename) {
 	return true;
 }
  
-bool ParamPool::Save(const char * filename) {
+bool ParamPool::Save(const char * filename, int i) {
 
 	ofstream f(filename, ios::binary | ios::trunc );
 	if (!f.is_open()) return false;
@@ -87,6 +87,7 @@ bool ParamPool::Save(const char * filename) {
 		memcpy(str_buf + index, it->first.c_str(), it->first.length());
 		index += it->first.length();
 	}
+	if(i > 0) iteration = i;
 	//TODO : allow TO_NHWC
 	param_file_header header = { 1,0, tensor_order, 0, iteration * GetAppConfig().GetBatch(), str_bytes};
 
@@ -279,7 +280,9 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				vector<string> strs;
 				split_string(strs, val, ',');
 				channels = 0;
-				for (int i = 0; i < min(8, strs.size()); i++) {
+				int size = strs.size();
+				if (size > 8) size = 8;
+				for (int i = 0; i < size; i++) {
 					int t = atoi(strs[i].c_str());
 					if (t < 0) t += (layers.size() - 1);
 					

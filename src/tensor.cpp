@@ -148,10 +148,60 @@ bool FloatTensor4D::Get3DData(int index, float * out, bool to_cpu) const {
 		to_cpu ? cudaMemcpyDeviceToHost : cudaMemcpyDeviceToDevice);
 	return  err == cudaSuccess;
 }
+bool FloatTensor4D::Concat(int b, int c, const float * src, int src_c, int src_w, int src_h) {
+	if (b < 0 || b >= batch ||  c < 0 || NULL == src || NULL == gpu_data) return false;
+	float* dest = gpu_data+ b * elements_3d + c * elements_2d; 
+	if (src_w == width && src_h == height) {
+		return add_in_gpu(dest, src, src_c * elements_2d);
+	}
+	else { 
+		
+		int h = min(src_h, height);
+		int w = min(src_w, width);
+		if(TO_NCHW == order){			
+			for (int i = 0; i < src_c; i++) {
+				for (int j = 0; j < h; j++) {
+					if(!add_in_gpu(dest, src, w)) return false; 
+					src += src_w;
+					dest += width;
+				}
+			} 
+		}
+		else {			
+			for (int i = 0; i < h; i++) { 
+				if (!add_in_gpu(dest, src, src_c * w)) return false; 
+				src += src_w * src_c;
+				dest += width * src_c;
+			}
+		}
+	}
+	return true;
+}
 void FloatTensor4D::DumpToFile(const string& filename, int b, int c) const { 
-	if (filename.length() == 0 || 0 == elements || b < 0 || c < 0 || b >= batch || c >= channels) return;
-
+	if (filename.length() == 0 || 0 == elements ) return;
+	if (b < 0 || c < 0) {
+		char* temp = CopyToCPU();
+		char line[100];
+		ofstream f(filename, ios::trunc);
+		int index = 0;
+		for (b = 0 ; b < batch; b++) {
+			int n = sprintf(line, "b: %d\n", b);
+			f.write(line, n); 
+			for (int c = 0; c < channels; c++) {
+				for (int i = 0; i < width * height ; i++) {
+					n = sprintf(line, "%e ", temp[index]++);
+					f.write(line, n);
+				}
+				//f.write("\n", 1);
+			}
+			f.write("\n", 1);
+		}
+		f.close();
+		delete[]temp;
+		return;
+	}
 	int s = width * height;
+	
 	float* buffer = new float[s];
 	memset(buffer, 0, sizeof(float) * s);
 	if (order == TO_NCHW) {

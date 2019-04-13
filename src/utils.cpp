@@ -67,7 +67,7 @@ void DisplayGPUs() {
  
 
 unsigned int random_gen() {
-	unsigned int rnd = 0;
+	unsigned int rnd = clock();
 #ifdef _WIN32
 	rand_s(&rnd);
 #else
@@ -143,7 +143,7 @@ float* make_float_vector(int n) {
 float rand_scale(float s) {
 	float scale = rand_uniform_strong(1, s);
 	if (random_gen() % 2) return scale;
-	return 1.0 / scale;
+	return 1.0f / scale;
 }
 
 bool cuDNNInitialize() {

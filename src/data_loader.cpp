@@ -3,36 +3,54 @@
 #include "config.h"
 #include "data_loader.h"
 
-
+int post_load_rot[16] = { 3,4,1,5,0,1,0,1,3,1,4,0,3,4,4,1 };
+int rot_index = 0;
+int mini_batch_rotate = 0;
 bool DataLoader::ImagePostLoad(Image & image,  ImageLabelParseInfo & info) {
 
 	info.actual_w = GetNetwork().input.GetWidth();
 	info.actual_h = GetNetwork().input.GetHeight();
 	info.orig_w = image.GetWidth();
 	info.orig_h = image.GetHeight();
-	info.crop_l = info.crop_t = 0;
-
-	if (info.orig_w != info.actual_w) {
-		int dw = (int)(info.orig_w  * GetAppConfig().GetJitter());
-		info.crop_l = (int)rand_uniform_strong(0, dw);
-		info.crop_r = info.orig_w - rand_uniform_strong(0, dw);
+	info.crop_l = info.crop_t = 0; 
+	float jitter = GetAppConfig().GetJitter();
+	if (jitter > 0.0 && jitter < 0.5) {
+		if (info.orig_w != info.actual_w) {
+			int dw = (int)(info.orig_w * jitter);
+			info.crop_l = (int)rand_uniform_strong(0, dw);
+			info.crop_r = info.orig_w - rand_uniform_strong(0, dw);
+		}
+		if (info.orig_h != info.actual_h) {
+			int dh = (int)(info.orig_h  * jitter);
+			info.crop_t = (int)rand_uniform_strong(0, dh);
+			info.crop_b = info.orig_h - rand_uniform_strong(0, dh);
+		}
 	}
-	if (info.orig_h != info.actual_h) {
-		int dh = (int)(info.orig_h  * GetAppConfig().GetJitter());
-		info.crop_t = (int)rand_uniform_strong(0, dh);
-		info.crop_b = info.orig_h - rand_uniform_strong(0, dh);
+	else {
+		info.crop_r = info.orig_w;
+		info.crop_b = info.orig_h;
 	}
+ 
+	//post_load_rot[rot_index] = random_gen() % ROTATE_TYPE_COUNT;
 	info.rotate = (RotateType)(random_gen() % ROTATE_TYPE_COUNT);
-
+	//cout << post_load_rot[rot_index];
+ 
+	//if (++rot_index >= 16) rot_index = 0;
+	//else cout << ",";
 	if (info.orig_h != info.actual_h || info.orig_w != info.actual_w) {
 		// normally big pictures, need to shrink. Operation: to crop and then to resize		
-		Image cropped;
-		
-		if (!image.Crop(cropped, info.crop_l, info.crop_t, info.crop_r - info.crop_l, info.crop_b - info.crop_t))
-			return false;  
-		if (!cropped.ResizeTo(info.actual_w, info.actual_h, GetAppConfig().FastResize()))
-			return false;  
-		image = cropped;  
+		if (jitter > 0.0 && jitter < 0.5) {
+			Image cropped;
+			if (!image.Crop(cropped, info.crop_l, info.crop_t, info.crop_r - info.crop_l, info.crop_b - info.crop_t))
+				return false;
+			if (!cropped.ResizeTo(info.actual_w, info.actual_h, GetAppConfig().FastResize()))
+				return false;
+			image = cropped;
+		}
+		else {
+			if (!image.ResizeTo(info.actual_w, info.actual_h, GetAppConfig().FastResize()))
+				return false;
+		}
 	}
 
 	if (!image.Rotate(info.rotate)) return false; 
@@ -40,8 +58,7 @@ bool DataLoader::ImagePostLoad(Image & image,  ImageLabelParseInfo & info) {
 
 	info.hue = rand_uniform_strong(-hue, hue);
 	info.sat = rand_scale(GetAppConfig().GetSaturation());
-	info.expo = rand_scale(GetAppConfig().GetExposure());
-
+	info.expo = rand_scale(GetAppConfig().GetExposure()); 
 	image.Distort(info.hue, info.sat, info.expo);
 
 	return true;
@@ -216,13 +233,13 @@ bool DataLoader::LoadImageLabel(const char * filename, ObjectInfo* labels, const
 	file.close();
 	//// end of 
 	ObjectInfo * item = labels;
-	i = 0;
+	i = 0; 
 	while (items.size() > 0) {
 		int index = random_gen() % items.size();
 		*item++ = items[index];
 		items.erase(items.begin() + index);
 		i++;
-	}
+	} 
 	if (i < GetAppConfig().GetMaxTruths()) item->class_id = -1;
 	return true;
 }
@@ -248,7 +265,7 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 	
 	int mini_batch = GetAppConfig().GetMiniBatch(); 
 
-	Image image;
+	//Image image;
 	ImageLabelParseInfo info = { 0 };
 
  
@@ -259,16 +276,18 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
  
 
 	FloatTensor4D& input = GetNetwork().input; 
+
  
-	for (int i = 0, index = start_index; i < mini_batch; i++, index++) {
+	for (int i = 0, index = start_index; i < mini_batch; i++, index++) { 
 		if (index >= ds->GetSize()) {
 			info.file_name =  ds->FilenameAt(random_gen() % ds->GetSize()).c_str();
 		}
 		else
-			info.file_name =  ds->FilenameAt(index).c_str();
- 
+			info.file_name =  ds->FilenameAt(index).c_str(); 
+		//cout << info.file_name << endl;
 		//cout << "*** loading " << info.file_name << " *** \n";
 		long t1 = GetTickCount();
+		Image image;
 		if (!image.Load(info.file_name, input.GetChannels())) return false;  
 		
 		long t2 = GetTickCount() ;
@@ -313,12 +332,11 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 		}
 		truth_data += GetAppConfig().GetMaxTruths();
 	}	
- 
-
+	 
 	start_index += mini_batch;
 	if (start_index >= ds->GetSize()) {
 		start_index = 0;
 		ds->ShuffleFiles();
-	}
+	} 
 	return true;
 }

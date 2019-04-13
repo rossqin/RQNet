@@ -3,7 +3,7 @@
 #include "network.h"
 #include "inference_module.h"
 
-Layer::Layer(const XMLElement* element,int i ) {
+Layer::Layer(const XMLElement* element,int i, InferenceModule*& prev_module) {
 	index = i; 
 	name = element->Attribute("id");
 	if (name.length() == 0) {
@@ -15,21 +15,23 @@ Layer::Layer(const XMLElement* element,int i ) {
 	const XMLElement* moduleElement = element->FirstChildElement("module");
 	while (moduleElement){
 		string mtype = moduleElement->Attribute("type");
-		last_module = InferenceModule::FromXmlElement(moduleElement,this,GetNetwork().GetDataOrder());
-		modules.push_back(last_module);
-		 
+		prev_module = InferenceModule::FromXmlElement(moduleElement,this,GetNetwork().GetDataOrder(), prev_module);
+		modules.push_back(prev_module);
 		moduleElement = moduleElement->NextSiblingElement();
 	}
+	last_module = prev_module;
 }
-
 bool Layer::Forward(ForwardContext & context) {
-	int n = -1;
+	//int n = -1;
 	for(size_t i = 0 ; i < modules.size(); i++){
 		if (!modules[i]->Forward(context)) {
 			cerr << "Forward failed at " << modules[i]->name << endl;
 			return false;
 		}
-		n = i;
+		char filename[MAX_PATH];
+		sprintf(filename, "%s%s.output.bin", DEBUGGING_DIR, name.c_str());
+		//modules[i]->output.SaveBatchData(filename, -1);
+		//n = i; 
 	}
 #if 0
 	if (n >= 0) {

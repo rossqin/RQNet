@@ -188,7 +188,7 @@ bool AppConfig::RadmonScale(uint32_t it, int & new_width, int & new_height) cons
 }
  
 bool AppConfig::GetWeightsPath(uint32_t it, string & filename) const {
-	if ((it > 0) && (save_weight_interval > 0) && (it % save_weight_interval) == 0) {
+	if ((save_weight_interval > 0) && (it % save_weight_interval) == 0) {
 		struct stat s = { 0 };
 		ostringstream os;
 		stat(out_dir.c_str(), &s);

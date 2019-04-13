@@ -33,7 +33,7 @@ protected:
 	void DeltaBox(float* data, float* delta, const ObjectInfo& truth, const AnchorBoxItem& anchor, int index, int x, int y);
 	bool InitDescriptors(bool trainning);
 public:
-	YoloModule(const XMLElement* element, Layer* l, TensorOrder order);
+	YoloModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~YoloModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);

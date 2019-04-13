@@ -531,7 +531,7 @@ bool Image::Rotate(RotateType rt) {
 	
 	if (err != cudaSuccess)
 		return false;
-	return PullFromGPU(); 
+	return true; 
 }
 constexpr float norm_factor = 1.0 / 255;
 __global__ static void hwc_uc_2_chw_float_kernel(float* dst, const uint8_t* src, int width, int height, int channels, bool norm) {

@@ -142,7 +142,6 @@ __global__ static void gradient_kernel(float* data, float* delta, int elements, 
 		index += threads;
 	}
 }
-static int dbg_index = 1;
 bool gradient_array_ongpu(float *x, float * delta, int n, ACTIVATION_TYPE a) {
  
 	if (a == LINEAR) return true;

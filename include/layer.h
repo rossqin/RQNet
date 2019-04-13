@@ -21,8 +21,10 @@ protected:
 	vector<InferenceModule*> modules;
 
 public:
+	// for debugging
+	FloatTensor4D saveDelta;
 	InferenceModule* last_module;
-	Layer(const XMLElement* element, int i);
+	Layer(const XMLElement* element, int i, InferenceModule*& prev_module);
 	inline int GetIndex() const { return index; }
 	inline const string& GetName() const { return name; }
 

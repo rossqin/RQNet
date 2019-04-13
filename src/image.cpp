@@ -1,14 +1,7 @@
 #include "StdAfx.h"
 #include "image.h"
-
-#define STBI_MSC_SECURE_CRT
-#define STB_IMAGE_IMPLEMENTATION
-
-#include "stb_image.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h" 
-
-
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui.hpp>
 Image::Image() {
 	height = 0;
 	width = 0;
@@ -179,37 +172,19 @@ bool hwc_uc_2_chw_float(float* dst, const uint8_t* src, int w, int h, int c, boo
 bool Image::Load(const char * filename, int c, bool norm ) {
  
 	//
-	stbi_uc* io_buffer = NULL;
+	uint8_t* io_buffer = NULL;
 	size_t size = 0;
 	unsigned int start_t = GetTickCount();
-	/*ifstream file(filename, ios::binary);
-	if (file.is_open()) {
-		file.seekg(0, ios_base::end);
-		size = file.tellg();
-		if (file.bad())
-			cerr << "bad status in file \n";
-		//	cout << "File size:" << size << " bytes.\n";
-		if (size < 128) {
-			cerr << "bad file size.\n";
-			return false;
-		}
-		io_buffer = New stbi_uc[size];
-		file.seekg(0, ios_base::beg);
-		file.read(reinterpret_cast<char*>(io_buffer), size);
-		file.close();
-	}
-	//stbi_load_from_memory
-	//long t1 = GetTickCount();*/
-	//stbi_uc *buff = stbi_load_from_memory(io_buffer, size, &width, &height, &channels, c);
-
-	//delete[]io_buffer;
-	stbi_uc *buff = stbi_load(filename, &width, &height, &channels, c);
+	cv::Mat mat = cv::imread(filename); 
 	
-	if (!buff) {
-		cerr << "Cannot load image `" << filename << "`\nSTB Reason: " << stbi_failure_reason() << endl;
-
+	if (mat.empty()) {
+		cerr << "\nError: Cannot load image `" << filename << "`\n";
 		return false;
 	}
+
+	height = mat.rows;
+	width = mat.cols;
+	channels = mat.channels();
 	//long t2 = GetTickCount();
 	//cout << "****** stbi_load " << filename << " in " << (t2 - t1) << "ms.\n";
 	size_t image_size = width * height * channels;
@@ -224,20 +199,17 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 		gpu_data = NULL;
 	} 
 	cudaMalloc(&gpu_data, image_size * sizeof(float));
-	if (NULL == gpu_data) {
-		delete[]buff;
+	if (NULL == gpu_data) { 
 		return false;
 	}
-	stbi_uc* temp = NULL;
+	uint8_t* temp = NULL;
 	cudaMalloc(&temp, image_size);
-	if (NULL == temp || (cudaSuccess != cudaMemcpy(temp, buff, image_size, cudaMemcpyHostToDevice))) {
+	if (NULL == temp || (cudaSuccess != cudaMemcpy(temp, mat.data, image_size, cudaMemcpyHostToDevice))) {
 		if (temp) cudaFree(temp);
 		cudaFree(gpu_data);
-		gpu_data = NULL;
-		delete[]buff;
+		gpu_data = NULL; 
 		return false;
-	}
-	delete[]buff;
+	} 
 	bool ret = hwc_uc_2_chw_float(gpu_data, temp, width, height, channels, norm);
 	cudaFree(temp);
 	
@@ -283,7 +255,8 @@ bool Image::Save(const char* filename, int quality) {
 	 
 	if (!PullFromGPU()) return false;
 
-	uint8_t *dat_buf = New uint8_t[height * width * channels];
+	cv::Mat mat(height, width, CV_8UC3);  
+	uint8_t* dat_buf = mat.data;
 	int si = 0;
 	for (int i = 0; i < channels; i++) {		
 		int di = i;
@@ -296,26 +269,41 @@ bool Image::Save(const char* filename, int quality) {
 			}
 		}
 	}
-	int success = 0;
+ 
+	vector<int> params;
+	string fname(filename);
+	
 	if (is_suffix(filename, ".jpg") || is_suffix(filename, ".JPG")) {
-		success = stbi_write_jpg(filename, width, height, channels, dat_buf, quality);
+		params.push_back(cv::IMWRITE_JPEG_QUALITY);
+		params.push_back(quality);
+		//success = stbi_write_jpg(filename, width, height, channels, dat_buf, quality);
 	}
 	else if (is_suffix(filename, ".bmp") || is_suffix(filename, ".BMP")) {
-		success = stbi_write_bmp(filename, width, height, channels, dat_buf);
+		//success = stbi_write_bmp(filename, width, height, channels, dat_buf);
 	}
 	else if (is_suffix(filename, ".png") || is_suffix(filename, ".PNG")) {
-		success = stbi_write_png(filename, width, height, channels, dat_buf, width * channels);
+		params.push_back(cv::IMWRITE_PNG_COMPRESSION);
+		params.push_back(9);
+		//success = stbi_write_png(filename, width, height, channels, dat_buf, width * channels);
 	}
-	else {
-		string new_filename(filename);
-		new_filename += ".jpg";
-		success = stbi_write_jpg(new_filename.c_str(), width, height, channels, dat_buf, quality);
+	else { 
+		fname += ".jpg";
+		params.push_back(cv::IMWRITE_JPEG_QUALITY);
+		params.push_back(quality); 
 	} 
-	delete []dat_buf;
-	if (!success) {
-		cerr << "Failed to write image `" << filename << "`\n";
+	bool success = false;
+	try {
+		success = cv::imwrite(fname, mat, params);
+		if (!success) {
+			cerr << "Failed to write image `" << fname << "`\n";
+			return false;
+		}
+	}
+	catch (const cv::Exception& ex) {
+		cerr << "Failed to write image `" << fname << "`, reasons: " << ex.what() << endl;
 		return false;
 	}
+	
  
 	return true;
 }

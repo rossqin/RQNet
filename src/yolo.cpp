@@ -3,12 +3,13 @@
 #include "param_pool.h"
 #include "yolo.h"
 #include "box.h"
-YoloModule::YoloModule(const XMLElement* element, Layer* l, TensorOrder order) {
+YoloModule::YoloModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev) {
 	layer = l;
 	x_desc = NULL;
 	y_desc = NULL;
 	input_width = 0;
 	input_height = 0;
+	logical_prev = prev;
 	GetPrevModules(element);
 	threshold_ignore = element->FloatAttribute("ignore-thresh",0.5);
 	threshold_thruth = element->FloatAttribute("truth-thresh", 1.0);
@@ -202,22 +203,13 @@ bool YoloModule::Forward(ForwardContext& context) {
 	} 
 	if (!context.training) return true;
 
-	float cost = 0.0;
+	float loss = 0.0;
 	float avg_iou = 0, recall = 0, recall75 = 0, avg_cat = 0;
 	float avg_obj = 0, avg_anyobj = 0;
 	int count = 0, class_count = 0;
 	float reciprocal_w = 1.0f / input.GetWidth();
 	float reciprocal_h = 1.0f / output.GetHeight();
 
-#if 0
-	char filename[MAX_PATH];
-	sprintf(filename, "E:\\AI\\Data\\debugging\\RQNet\\%s.forward.yolo.activation.bin", layer->GetName().c_str());
-	ofstream of(filename, ios::binary | ios::trunc);
-	if (of.is_open()) {
-		of.write(reinterpret_cast<char*>(output_cpu), output.Elements3D() * sizeof(float));
-		of.close();
-	}
-#endif
 	int  max_boxes = context.max_truths_per_batch;
 	ObjectInfo* batch_truths = context.truths;
 	float* delta_cpu = New float[output.Elements3D()];
@@ -286,67 +278,46 @@ bool YoloModule::Forward(ForwardContext& context) {
 			}
 		}
 		shortcut_delta.Set3DData(b, delta_cpu, true);
-		cost += square_sum_array(delta_cpu, output.Elements3D());
-#if 0
-		if (12 == b) {
-			char filename[MAX_PATH];
-			sprintf(filename, "E:\\AI\\Data\\debugging\\RQNet\\%s_delta_one_c.txt", layer->GetName().c_str());
-			char line[20];
-			ofstream of(filename, ios::trunc);
-			int index = 0;
-			if (of.is_open()) {
-				for (int c = 0; c < output.GetChannels(); c++) {
-					of << "c - " << c << "\n";
-					for (int y = 0; y < output.GetHeight(); y++) {
-						for (int x = 0; x < output.GetWidth(); x++) {
-							sprintf(line, "%.6f ", delta_cpu[index++]);
-							of << line;
-						}
-						of << "\n";
-					}
+		loss += square_sum_array(delta_cpu, output.Elements3D());
 
-				}
-				of.close();
-			}
-		}
-#endif
 	}
 
 	delete[]output_cpu;
-	delete[]delta_cpu;
-	GetNetwork().RegisterLoss(cost);
+	delete[]delta_cpu; 
+	GetNetwork().RegisterLoss(loss);
+
+	loss /= output.GetBatch();
 	 
 	ostringstream oss;
 	avg_anyobj /= output.MemElements();
-	oss << "Layer<"<< layer->GetIndex() <<">: " << count << " objects." ;
+	oss << " " << name  <<": Found " << count << " objects with layer loss: "<< loss  ;
 	if (count > 0) {
 		avg_iou /= count;
 		avg_obj /= count;
 		recall /= count;
 		recall75 /= count;
-		
+		recall *= 100;
+		recall75 *= 100;
+
 		if (class_count > 0) {
-			avg_cat /= class_count;			
-			oss << setprecision(4) << " Avg IoU: " << avg_iou << ", cls: " << avg_cat << ", obj:" << avg_obj 
-			 << ", No Obj: "<< avg_anyobj <<", Recall: "<< recall <<"(50%), "<< recall75 <<"(75%).\n" ;
+			avg_cat /= class_count;
+			oss << setprecision(4) << ".\n               IoU:" << avg_iou << ", Cls:" << avg_cat << ", Obj:" << avg_obj
+				<< ", No Obj:" << avg_anyobj << ", .5R:" << recall << "%, .75R:" << recall75 << "%.";
 		}
 		else {
-			oss << setprecision(4) << " Avg IoU: " << avg_iou << ", obj:" << avg_obj
-				<< ", No Obj: " << avg_anyobj << ", Recall: " << recall << "(50%), " << recall75 << "(75%).\n";
-			 
-			 
+			oss << setprecision(4) << ".\n               IoU:" << avg_iou << ", Obj:" << avg_obj
+				<< ", No Obj:" << avg_anyobj << ", .5R:" << recall << "%, .75R:" << recall75  << "%." ;
+
+
 		}
 		cout << oss.str();
 	}
-	else
-		cout << "Layer<" << layer->GetIndex() << ">: " << count << " objects.\n";
+	
+	cout <<  endl << endl;
 
 	return true;
 }
 bool YoloModule::Backward(FloatTensor4D& delta) {
-	delta = shortcut_delta;
-// 	char filename[300];
-// 	sprintf(filename, "E:\\AI\\Data\\debugging\\RQNet\\%s.backward.bin", layer->GetName().c_str());
-// 	delta.SaveBatchData(filename, -1);
-	return true;
+	delta = shortcut_delta; 
+	return shortcut_delta.Release();
 }

@@ -70,6 +70,8 @@ public:
 	bool Set3DData(int index, const float*  src, bool src_from_cpu = false);
 	bool Get3DData(int index, float*  out, bool to_cpu = true) const;
 
+	bool Concat(int b, int c, const float* src, int src_c, int src_w, int src_h);
+
 	void DumpToFile(const string& filename, int b = 0 , int c = 0) const ;
 
 	bool UpSample(FloatTensor4D& result, int stride_w, int stride_h ) const;
@@ -87,4 +89,4 @@ public:
 	char* CopyToCPU() const ;
 
 };
-bool add_in_gpu(float* dest, float* src, int elements);
+bool add_in_gpu(float* dest, const float* src, int elements);

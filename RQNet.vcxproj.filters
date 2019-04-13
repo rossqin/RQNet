@@ -68,12 +68,6 @@
     <ClInclude Include="include\image.h">
       <Filter>include</Filter>
     </ClInclude>
-    <ClInclude Include="include\stb_image.h">
-      <Filter>include</Filter>
-    </ClInclude>
-    <ClInclude Include="include\stb_image_write.h">
-      <Filter>include</Filter>
-    </ClInclude>
     <ClInclude Include="include\inference_module.h">
       <Filter>include</Filter>
     </ClInclude>

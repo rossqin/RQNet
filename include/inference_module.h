@@ -14,19 +14,20 @@ protected:
 	int input_width;
 	int input_channels;
 	int output_channels ;
-	
+	InferenceModule* logical_prev;
 	cudnnTensorDescriptor_t x_desc, y_desc;
 	Layer* layer;
 	
 	vector<InferenceModule*> prevs;
 	void GetPrevModules(const XMLElement* element);	 
 	virtual bool InitDescriptors(bool trainning) { return true; }
+	bool PrepareShortcutDelta();
 public:
 	string name;
 	FloatTensor4D input;
 	FloatTensor4D output;
 	FloatTensor4D shortcut_delta;
-	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, TensorOrder order);
+	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, TensorOrder order, InferenceModule* prev);
 	inline int GetOutputChannels() const { return output_channels; }
 	bool UpdateShortcutDelta(const FloatTensor4D& delta);
 	virtual bool Forward(ForwardContext& context) ;
@@ -62,7 +63,7 @@ protected:
 	friend class BatchNormModule;
 public :
 	~ConvolutionalModule();
-	ConvolutionalModule(const XMLElement* element, Layer* l, TensorOrder order);
+	ConvolutionalModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
 	bool UpdateParams(float lr);
@@ -84,7 +85,7 @@ protected:
 	PooingMode mode;
 	bool InitDescriptors(bool trainning);
 public :
-	PoolingModule(const XMLElement* element, Layer* l, TensorOrder order);
+	PoolingModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~PoolingModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
@@ -100,7 +101,7 @@ protected:
 	cudnnTensorDescriptor_t t_desc; 
 	bool InitDescriptors(bool trainning);
 public:
-	BatchNormModule(const XMLElement* element, Layer* l, TensorOrder order);
+	BatchNormModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~BatchNormModule();	
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
@@ -112,7 +113,7 @@ protected:
 	ACTIVATION_TYPE atype;
 	float factor; 
 public:
-	ActivationModule(const XMLElement* element, Layer* l, TensorOrder order);
+	ActivationModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~ActivationModule(){ }
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
@@ -123,7 +124,7 @@ protected:
 	int stride_h; 
 	bool InitDescriptors(bool trainning);
 public:
-	UpSampleModule(const XMLElement* element, Layer* l, TensorOrder order);
+	UpSampleModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~UpSampleModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
@@ -134,7 +135,7 @@ class DeconvModule : public InferenceModule {
 protected:
  
 public:
-	DeconvModule(const XMLElement* element, Layer* l, TensorOrder order);
+	DeconvModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
 	~DeconvModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);

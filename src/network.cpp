@@ -87,8 +87,9 @@ bool CNNNetwork::Load(const char* filename) {
 	}
 	XMLElement* layerElement = root->FirstChildElement("layers/layer");
 	int index = 0;
+	InferenceModule* last_module = NULL;
 	while (layerElement) {
-		Layer* layer = New Layer(layerElement,++index);
+		Layer* layer = New Layer(layerElement,++index, last_module);
 		layers.push_back(layer);
 		layerElement = layerElement->NextSiblingElement();
 	}
@@ -117,17 +118,7 @@ bool CNNNetwork::UpdateWorkspace(size_t new_size) {
 	}
 	return true;
 }
-/*
-bool training;
-bool freezeConvParams;
-bool freezeBNParams;
-bool freezeActParams;
-FloatTensor4D* input;
-int max_truths_per_batch;
-ObjectInfo* truths;
-*/
 bool CNNNetwork::Forward(bool training) {
-
 	loss = 0.0;
 	ForwardContext context = { training,
 		GetAppConfig().ConvParamsFreezed(),
@@ -137,21 +128,23 @@ bool CNNNetwork::Forward(bool training) {
 		GetAppConfig().GetMaxTruths(),
 		truths };
 	for (int i = 0; i < (int)layers.size(); i++) {
-		if (!layers[i]->Forward(context)) {
-			cerr << "Forward failed : index: " << i << " , name :" << layers[i]->GetName() << endl;
+		Layer* l = layers[i];
+		if (!l->Forward(context)) {
+			cerr << "Error: " << l->GetName() << " forward failed!\n";
 			return false;
-		}
-		
-	}
+		}	 
+	} 
 	return true;
-}
+} 
 bool CNNNetwork::Backward() {
 	FloatTensor4D d;
+	char filename[MAX_PATH];
 	for (int i = layers.size() - 1; i >= 0; i--) { 
-		if (!layers[i]->Backward(d)) {
-			cerr << "Backward failed at " << layers[i]->GetName() << endl;
+		Layer* l = layers[i];
+		if (!l->Backward(d)) {
+			cerr << "Error: " << l->GetName() << " backwawd failed!\n";
 			return false;
-		}
+		} 
 	}
 	return true;
 }
@@ -171,90 +164,59 @@ bool CNNNetwork::Train() {
 
 	uint32_t it;
 	if (GetAppConfig().FromFirstIteration())
-		it = 1001;
+		it = 0;
 	else
 		it = GetParamPool().GetIteration();
 
-	cout << "\n*** Start training from iteration " << it << "...\n\n";
+	cout << "\n *** Start training from iteration " << (it + 1) << "...\n\n";
 	int new_width, new_height;
 	string weights_file;
-	float avg_loss = -1.0;
-	
+	float avg_loss = -1.0;  
+ 
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
-		clock_t start_clk = clock();
-		char dbg_filename[MAX_PATH];
-		ifstream fi;
-		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) {
-			cout << "\nSubdivision " << i <<": loading data ... "  ;
+		it++;
+		clock_t start_clk = clock(); 		
+		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
+ 
+			//cout << "\nSubdivision " << i << ": loading data ... ";
 			long t = GetTickCount();
-			sprintf(dbg_filename, "data_subd_%d_input.dat", i);
-			
-			fi.open(dbg_filename, ios::binary);
-			if (!fi.is_open()) return false;
-			char* data = new char[input.MemBytes()];
-			fi.read(data, input.MemBytes());
-			fi.close();
-			if (cudaSuccess != cudaMemcpy(input.GetMem(), data, input.MemBytes(), cudaMemcpyHostToDevice)) {
-				delete[]data;
-				return false;
-			}
-			sprintf(dbg_filename, "data_subd_%d_truths.dat", i);
-			fi.open(dbg_filename, ios::binary);
-			if (!fi.is_open()) return false;
-			fi.read(reinterpret_cast<char*>(truths),
-				GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo));
-			fi.close();
-
-#if 0
-			if (!loader.MiniBatchLoad(input, truths)) return false; 
-
-			sprintf(dbg_filename, "data_subd_%d_input.dat", i);
-			char* data = input.CopyToCPU();
-			of.open(dbg_filename, ios::binary | ios::trunc);
-			if (of.is_open()) {
-				of.write(data, input.MemBytes());
-				of.close();
-			}
-			delete[]data;
-			sprintf(dbg_filename, "data_subd_%d_truths.dat", i);
-			of.open(dbg_filename, ios::binary | ios::trunc);
-			if (of.is_open()) {
-				of.write(reinterpret_cast<char*>(truths), 
-					GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo));
-				of.close();
-			}
-			
-#endif
+			input = 0.0f;
+			size_t len = GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
+			memset(truths, 0, len);
+			input = 0.0f; 
+			if (!loader.MiniBatchLoad(input, truths)) return false;  
 			t = GetTickCount() - t;
-			cout << " in " << (t * 0.001) << " secs.\n";
+			//cout << " in " << (t * 0.001) << " secs.\n";
+			
 			if (!Forward(true)) return false; 
-			if (!Backward()) return false;  
+			if (!Backward()) return false;   
 		}
 		
-		loss /= GetAppConfig().GetBatch(); 
+		loss /=  GetAppConfig().GetBatch();
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
 			avg_loss = avg_loss * 0.9 + loss * 0.1;
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
 		float lr = GetAppConfig().GetCurrentLearningRate(it);
-		cout << "\nIter " << it << ", loss : " << loss <<", avg-loss: "<< avg_loss 
-			<<", rate: " << lr << ", time: " << (ms * 0.001) << "s, "
-			<< it * GetAppConfig().GetBatch() << " images processed.\n";
-		//TODO: save 
+		cout << "\n >> It " << it << " | Loss: " << loss <<", Avg-Loss: "<< avg_loss 
+			<<", Learn-Rate: " << lr << ", Time: " << (ms * 0.001) << "s, Images: "
+			<< it * GetAppConfig().GetBatch() << ".\n\n";
+		 
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
 			ofs << setw(10) << it << ", " <<  input.GetWidth()<< ", " << input.GetHeight()<< ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
 			ofs.close();
 		}
+		
 		lr /= GetAppConfig().GetBatch();
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
-		}
+		} 
 		if (GetAppConfig().GetWeightsPath(it, weights_file)) {
-			GetParamPool().Save(weights_file.c_str());
-		}
+			GetParamPool().Save(weights_file.c_str(),it);
+		} 
 		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
 			(new_width != input.GetWidth() || new_height != input.GetHeight()) ) {
 			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
@@ -266,8 +228,8 @@ bool CNNNetwork::Train() {
 				new_width, new_height, input.GetOrder())) {
 				return false;
 			}
-		}		
-		it++;
+		} 
+		
 	}
 	//TODO : save final 
 	return true;
