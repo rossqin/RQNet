@@ -21,16 +21,18 @@ enum TensorOrder;
 class FloatTensor4D {
 protected: 
 	TensorOrder order;
-	size_t bytes;
-	size_t elements;
+	
 	float* gpu_data; 
 	bool fine;
 	int batch;
 	int channels;
 	int height;
 	int width;
-	size_t elements_2d;
-	size_t elements_3d;
+	int elements_2d;
+	int elements_3d;
+	int elements;
+	int bytes;
+	
 public:
 	FloatTensor4D();
 	FloatTensor4D(const FloatTensor4D& right);
@@ -38,12 +40,13 @@ public:
 	bool Init(int b, int c, int w, int h, TensorOrder o);
 	inline bool InitFrom(const FloatTensor4D& right){ return Init(right.batch, right.channels, right.width, right.height, right.order); }
 	bool Release();
+	inline operator float*() const{ return gpu_data; }
 	inline float* GetMem() const { return gpu_data; }
-	inline size_t MemBytes() const { return bytes; }
-	inline size_t MemElements() const { return elements; }
+	inline int MemBytes() const { return bytes; }
+	inline int MemElements() const { return elements; }
 
-	inline size_t Elements2D() const { return elements_2d; }
-	inline size_t Elements3D() const { return elements_3d; }
+	inline int Elements2D() const { return elements_2d; }
+	inline int Elements3D() const { return elements_3d; }
 
 	inline TensorOrder GetOrder() const { return order; }
 
@@ -85,8 +88,33 @@ public:
 	float* MoveDataToCPU();
 	float* RestoreDataFromCPU();
 #endif
-	bool CopyDataFromCPU(void * data, size_t data_bytes, DataType data_type, uint16_t dims[4]); 
+	bool CopyDataFromCPU(void * data, int data_bytes, DataType data_type, uint16_t dims[4]); 
 	char* CopyToCPU() const ;
 
 };
 bool add_in_gpu(float* dest, const float* src, int elements);
+template <typename T>
+class CudaPtr {
+protected:
+	T*  ptr;
+	int bytes;
+	mutable cudaError_t err;
+	CudaPtr() = default;
+public:	
+	cudaError_t GetError() const { return err; }
+	operator T*() { return ptr; }
+	bool ToCPU(void* dest, int length = -1) const {
+		if (length <= 0) length = bytes;
+		err = cudaMemcpy(dest, ptr, length, cudaMemcpyDeviceToHost);
+		return err == cudaSuccess;
+	}
+	CudaPtr(int length, void* src = NULL) {
+		ptr = NULL;
+		bytes = length * sizeof(T);
+		err = cudaMalloc(&ptr, bytes);
+		if (ptr && src) {
+			err = cudaMemcpy(ptr, src, bytes, cudaMemcpyHostToDevice);
+		}
+	}
+	~CudaPtr() { if (ptr) cudaFree(ptr); } 
+};

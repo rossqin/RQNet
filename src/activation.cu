@@ -145,8 +145,8 @@ __global__ static void gradient_kernel(float* data, float* delta, int elements, 
 bool gradient_array_ongpu(float *x, float * delta, int n, ACTIVATION_TYPE a) {
  
 	if (a == LINEAR) return true;
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	if (n < threads) {
 		b = (n + g - 1) / g;
@@ -188,8 +188,8 @@ bool gradient_array_ongpu(float *x, float * delta, int n, ACTIVATION_TYPE a) {
 bool print_debugging = false;
 bool activate_array_ongpu(float *x, int n, ACTIVATION_TYPE a) {
 
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	if (n < threads) {
 		b = (n + g - 1) / g;

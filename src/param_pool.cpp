@@ -163,12 +163,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
  
 	
 	int headings[5];
-	/*
-	int major;
-	int minor;
-	int revision;
-	int iteration int32 or unint64
-	*/
+
 
 	weightsfile.read((char*)headings, sizeof(int) * 4);
 	iteration = (uint32_t)headings[3] / GetAppConfig().GetBatch();

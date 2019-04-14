@@ -272,7 +272,7 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 	const Dataset* ds = GetAppConfig().GetDataSet();
 	info.max_boxes = GetAppConfig().GetMaxTruths();
 	info.small_object = GetAppConfig().SmallObjEnabled() ;
-	info.classes = ds->GetClasses();
+	info.classes = (int)ds->GetClasses();
  
 
 	FloatTensor4D& input = GetNetwork().input; 

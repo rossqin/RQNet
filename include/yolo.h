@@ -26,15 +26,18 @@ protected:
 	bool focal_loss; 
 	float threshold_ignore;
 	float threshold_thruth; 
+	string mask_anchor_str;
 	vector<AnchorBoxItem> masked_anchors;
 	int EntryIndex(int anchor, int loc, int entry);
 	void DeltaBackground(float* data, float* delta, ObjectInfo* truths, int max_boxes, float& avg_anyobj);
 	void DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat = NULL);
 	void DeltaBox(float* data, float* delta, const ObjectInfo& truth, const AnchorBoxItem& anchor, int index, int x, int y);
-	bool InitDescriptors(bool trainning);
+	bool InitDescriptors();
 public:
-	YoloModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev);
+	YoloModule(const XMLElement* element, Layer* l, InferenceModule* prev);
 	~YoloModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(FloatTensor4D& delta);
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	uint32_t GetFlops() const;
 };

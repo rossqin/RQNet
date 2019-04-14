@@ -79,10 +79,11 @@ bool CNNNetwork::Load(const char* filename) {
 	}
 	XMLElement* anchorElement = root->FirstChildElement("anchors/anchor");
 	while (anchorElement) {
-		int w = anchorElement->FloatAttribute("width", 0);
-		int h = anchorElement->FloatAttribute("height", 0);
-		if (w > 0 && h > 0)
-			anchors.push_back(pair<float, float>(w / 416.0, h / 416.0));
+		float w = anchorElement->FloatAttribute("width", 0.0f) / 416.0f;
+		float h = anchorElement->FloatAttribute("height", 0.0f) / 416.0f;
+		if (w > 0.0 && h > 0.0) {			
+			anchors.push_back(pair<float, float>(w, h ));
+		}
 		anchorElement = anchorElement->NextSiblingElement();
 	}
 	XMLElement* layerElement = root->FirstChildElement("layers/layer");
@@ -137,8 +138,7 @@ bool CNNNetwork::Forward(bool training) {
 	return true;
 } 
 bool CNNNetwork::Backward() {
-	FloatTensor4D d;
-	char filename[MAX_PATH];
+	FloatTensor4D d; 
 	for (int i = layers.size() - 1; i >= 0; i--) { 
 		Layer* l = layers[i];
 		if (!l->Backward(d)) {
@@ -232,5 +232,57 @@ bool CNNNetwork::Train() {
 		
 	}
 	//TODO : save final 
+	return true;
+}
+
+bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp16) const {
+	string prefix = dir;
+	if (prefix.find_first_of('\\') != prefix.length() - 1 &&
+		prefix.find_first_of('/') != prefix.length() - 1)
+		prefix += '/';
+	//TODO: make sure dir exists
+	prefix += name;
+
+	ofstream  xml(prefix + ".xml", ios::trunc);
+	ofstream  bin(prefix + ".bin", ios::binary | ios::trunc);
+	if ((!xml.is_open()) || (!bin.is_open()) ) return false;
+
+	xml << "<?xml version=\"1.0\" ?>" << endl;
+	//TODO: replace " with \" in name 
+	xml << "<net batch=\"1\" name=\""<<name<<"\" version=\"4\">" << endl;
+	xml << "  <layers>" << endl;
+	stringstream edges;
+	size_t bin_offset = 0;
+ 
+	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<< (fp16 ? "FP16" : "FP32")<<"\" type=\"Input\">" << endl;
+	xml << "        <output>" << endl;
+	xml << "          <port id = \"0\">" << endl;
+	xml << "            <dim>" << 1 << "</dim>" << endl;
+	xml << "            <dim>" << input.GetChannels() << "</dim>" << endl;
+	xml << "            <dim>" << input.GetHeight() << "</dim>" << endl;
+	xml << "            <dim>" << input.GetWidth() << "</dim>" << endl;
+	xml << "          </port>" << endl;
+	xml << "        </output>" << endl;
+	xml << "    </layer>" << endl;
+ 
+	for (size_t i = 0; i < layers.size(); i++) {
+		if (!(layers[i]->OutputIRModel(xml, bin, edges, bin_offset, fp16))) {
+			return false;
+		}
+	}
+
+	xml << "  </layers>" << endl;	
+	xml << "  <edges>" << endl;
+
+	xml << edges.str();
+
+	xml << "  </edges>" << endl;
+	xml << "  <meta_data>" << endl;
+	//TODO: write meta data
+	xml << "  </meta_data>" << endl;
+	xml << "</net>" << endl;
+	xml.close();
+	bin.close();
+
 	return true;
 }

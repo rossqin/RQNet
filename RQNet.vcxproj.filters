@@ -48,6 +48,15 @@
     <ClCompile Include="src\yolo.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\conv_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\batchnorm_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pooling_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\tensor.h">
@@ -84,6 +93,9 @@
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="include\data_loader.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\cuda_ptr.h">
       <Filter>include</Filter>
     </ClInclude>
   </ItemGroup>

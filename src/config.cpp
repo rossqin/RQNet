@@ -201,9 +201,9 @@ bool AppConfig::GetWeightsPath(uint32_t it, string & filename) const {
 		}
 		char ch = out_dir[out_dir.length() - 1];
 		if(ch == '/' || ch == '\\')
-			os << out_dir << weight_file_prefix << it << ".rqweights";
+			os << out_dir << weight_file_prefix << it << ".rweights";
 		else
-			os << out_dir << "/" << weight_file_prefix << it << ".rqweights";
+			os << out_dir << "/" << weight_file_prefix << it << ".rweights";
 		filename = os.str();
 		return true;
 	}

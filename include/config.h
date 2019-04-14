@@ -77,7 +77,7 @@ public :
 	bool Load(const char* filename, bool training = true);
 
 	inline const Dataset* GetDataSet() const { return dataset; }	
-	inline bool IsLastIteration(uint32_t i) const { return i >= stop_interation; 	}
+	inline bool IsLastIteration(int i) const { return i >= stop_interation; 	}
 	inline bool FromFirstIteration() const { return restart_interation; }
   
 	inline int  GetLastIteration() const { return stop_interation; }

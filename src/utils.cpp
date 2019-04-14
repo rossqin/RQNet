@@ -177,7 +177,7 @@ float* new_gpu_array(unsigned int elements, float fill_val) {
 	cudaError_t e = cudaMallocManaged(&ret, bytes);
 	// Notice : param no.2 of the cudaMalloc function always indicates "bytes" not "elements
 	if (e != cudaSuccess) {
-		cerr << "Error: cudaMalloc ret " << e << "in new_gpu_array!\n";
+		cerr << " *** Error: cudaMalloc ret " << e << " in new_gpu_array!\n";
 		return NULL;
 	}
 	for (unsigned int n = 0; n < elements; n++) {
@@ -248,4 +248,20 @@ void show_usage(const char* bin) {
 
 
 }
- 
+const char* get_dir_from_full_path(string& path) {
+	size_t pos = path.find_last_of('/');
+	if (pos == string::npos) pos = 0;
+	size_t pos1 = path.find_last_of('\\');
+	if (pos1 == string::npos) pos1 = 0;
+	if (pos < pos1) pos = pos1;
+	if (pos > 0) {
+		path = path.substr(0, pos + 1);
+		return path.c_str();
+	}
+	struct stat s = { 0 };
+	stat(path.c_str(), &s);
+	if (0 != (s.st_mode & S_IFDIR)) {
+		return path.c_str();
+	}
+	return "";
+}

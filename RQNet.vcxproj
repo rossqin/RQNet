@@ -52,7 +52,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;WIN64;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);include;$(OPENCV_PATH)include;</AdditionalIncludeDirectories>
       <DisableSpecificWarnings>4819</DisableSpecificWarnings>
     </ClCompile>
@@ -67,6 +67,7 @@
       <CodeGeneration>compute_61,sm_61</CodeGeneration>
       <AdditionalCompilerOptions>
       </AdditionalCompilerOptions>
+      <Warning>W2</Warning>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -75,7 +76,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(CudaToolkitIncludeDir);include;$(OPENCV_PATH)include;</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -91,8 +92,10 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\batchnorm_module.cpp" />
     <ClCompile Include="src\box.cpp" />
     <ClCompile Include="src\config.cpp" />
+    <ClCompile Include="src\conv_module.cpp" />
     <ClCompile Include="src\data_loader.cpp" />
     <ClCompile Include="src\image.cpp" />
     <ClCompile Include="src\inference_module.cpp" />
@@ -100,6 +103,7 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\network.cpp" />
     <ClCompile Include="src\param_pool.cpp" />
+    <ClCompile Include="src\pooling_module.cpp" />
     <ClCompile Include="src\tensor.cpp" />
     <ClCompile Include="src\tinyxml2.cpp" />
     <ClCompile Include="src\utils.cpp" />
@@ -109,6 +113,7 @@
     <ClInclude Include="include\activation.h" />
     <ClInclude Include="include\box.h" />
     <ClInclude Include="include\config.h" />
+    <ClInclude Include="include\cuda_ptr.h" />
     <ClInclude Include="include\data_loader.h" />
     <ClInclude Include="include\image.h" />
     <ClInclude Include="include\inference_module.h" />

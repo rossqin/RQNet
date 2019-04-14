@@ -3,23 +3,21 @@
 #include "param_pool.h"
 #include "yolo.h"
 #include "box.h"
-YoloModule::YoloModule(const XMLElement* element, Layer* l, TensorOrder order, InferenceModule* prev) {
-	layer = l;
-	x_desc = NULL;
-	y_desc = NULL;
-	input_width = 0;
-	input_height = 0;
-	logical_prev = prev;
+YoloModule::YoloModule(const XMLElement* element, Layer* l, InferenceModule* prev): 
+	InferenceModule(element, l, prev) {
+	 
 	GetPrevModules(element);
 	threshold_ignore = element->FloatAttribute("ignore-thresh",0.5);
 	threshold_thruth = element->FloatAttribute("truth-thresh", 1.0);
 	focal_loss = element->BoolAttribute("focal-loss", false);
 
 	const char* s = element->Attribute("anchor-masks");
-	string anch_str(s ? s : "");
-	
+	if (s)
+		mask_anchor_str = s;
+	else
+		mask_anchor_str = ""; 
 	vector<string> strs;
-	split_string(strs, anch_str);
+	split_string(strs, mask_anchor_str);
 	AnchorBoxItem abi;
 	for (string& s : strs) {
 		abi.masked_index = atoi(s.c_str()); 
@@ -28,7 +26,8 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, TensorOrder order, I
 		}
 		
 	}
-	features = input_channels / masked_anchors.size();
+	InitDescriptors();
+	features = input_channels / (int)masked_anchors.size();
 	classes = features - 5;
 	if (classes < 0) { // exceptional situation
 		features = 6;
@@ -59,13 +58,13 @@ static Box get_yolo_box(const float *data, const AnchorBoxItem& anchor, int x, i
 	if (*data < 10.0) // to avoid overflow
 		b.w = exp(*data) * anchor.width;
 	else
-		b.w = 0.00001;
+		b.w = 0.00001f;
 
 	data += stride;
 	if (*data < 10.0)
 		b.h = exp(*data) * anchor.height;
 	else
-		b.h = 0.00001;
+		b.h = 0.00001f;
 	return b;
 }
  
@@ -131,7 +130,9 @@ void YoloModule::DeltaBox(float* data, float* delta, const ObjectInfo& truth, co
 	index += output.Elements2D();
 	delta[index] = scale * (th - data[index]);
 }
-bool YoloModule::InitDescriptors(bool trainning) {
+bool YoloModule::InitDescriptors() {
+	output_width = input_width;
+	output_height = input_height;
 	return true;
 }
 void YoloModule::DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat) {
@@ -320,4 +321,19 @@ bool YoloModule::Forward(ForwardContext& context) {
 bool YoloModule::Backward(FloatTensor4D& delta) {
 	delta = shortcut_delta; 
 	return shortcut_delta.Release();
+}
+
+bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
+	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"RegionYolo\">" << endl;
+	//<data />
+	//<data axis="1" classes="1" coords="4" do_softmax="0" end_axis="3" mask="0,1,2" num="9"/>
+	xml << "      <data axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  
+		mask_anchor_str <<"\" num=\""<< GetNetwork().GetAnchorCount() <<"\" />" << endl;
+	WritePorts(xml);
+	xml << "    </layer>" << endl;
+	return true;
+}
+uint32_t YoloModule::GetFlops() const {
+	return 0;
 }

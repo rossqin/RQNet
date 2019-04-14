@@ -32,7 +32,9 @@ public:
 	
 	CNNNetwork();
 	~CNNNetwork();
-	
+	inline int GetInputChannels() const { return input.GetChannels(); }
+	inline int GetInputHeight() const { return input.GetHeight(); }
+	inline int GetInputWidth() const { return input.GetWidth(); }
 	inline void RegisterLoss(float l) { loss += l; }
 	inline float GetLoss() const { return loss; } 
 	inline int GetAnchorCount() const { return (int)anchors.size(); }
@@ -42,10 +44,9 @@ public:
 	bool Load(const char* filename);
 	Layer* GetLayer(int index) const ;
 	bool GetAnchor(int index, float& width, float& height);
-	bool UpdateWorkspace(size_t new_size); 
-	
+	bool UpdateWorkspace(size_t new_size); 	
 	bool Train();
-
+	bool OutputIRModel(const string& dir, const string& name, bool fp16 = true) const;
 };
 CNNNetwork& GetNetwork();
 ModulePool& GetModulePool();

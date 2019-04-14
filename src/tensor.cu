@@ -15,8 +15,8 @@ const FloatTensor4D& FloatTensor4D::operator=(float val) {
 		fine = (cudaSuccess == cudaMemset(gpu_data, 0, bytes));
 	}
 	else {
-		int g = GPUGridSize(9999);
-		int b = GPUBlockSize(9999);
+		int g = GPUGridSize();
+		int b = GPUBlockSize();
 		int threads = g * b;
 		tensor_set_kernel<<<g, b>>>(gpu_data, (int)elements, threads, val);
 		cudaError_t err = cudaDeviceSynchronize();
@@ -61,8 +61,8 @@ bool FloatTensor4D::Add(const FloatTensor4D& right) {
 	} 
 	
 	if (elements == right.elements) {
-		int g = GPUGridSize(9999);
-		int b = GPUBlockSize(9999);
+		int g = GPUGridSize();
+		int b = GPUBlockSize();
 		int threads = g * b;
 		tensor_add_kernel <<<g, b >>> (gpu_data, right.gpu_data, (int)elements, threads);
 	}
@@ -86,8 +86,8 @@ bool add_in_gpu(float* dest, const float* src, int elements) {
 	if (NULL == dest || NULL == src || 0 == elements) {
 		return false;
 	}
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_add_kernel <<<g, b>>>(dest, src, (int)elements, threads);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -105,8 +105,8 @@ bool FloatTensor4D::Add(const float * vals, size_t length) {
 		return false;
 	}
  
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_add_kernel <<<g, b>>>(gpu_data, vals, (int)elements, threads);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -124,8 +124,8 @@ __global__ static void tensor_add_kernel(float* data, int elements, int threads,
 	}
 }
 bool FloatTensor4D::Add(float val) {
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_add_kernel <<<g, b >>>(gpu_data, (int)elements, threads, val);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -146,8 +146,11 @@ __global__ static void tensor_mul_kernel(float* data, int elements, int threads,
 bool FloatTensor4D::Mul(float val) {
 	if (NULL == gpu_data) return false;
 	if (1.0f == val) return true;
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	if (0.0f == val) {
+		return cudaMemset(gpu_data, 0, bytes) == cudaSuccess;
+	}
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_mul_kernel <<<g, b >>>(gpu_data, (int)elements, threads, val);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -167,8 +170,8 @@ __global__ static void tensor_muladd_kernel(float* data, int elements, int threa
 bool FloatTensor4D::MulAdd(float scale, float bias) {
 	if (NULL == gpu_data) return false;
 	if (1.0f == scale) return Add(bias);
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_muladd_kernel <<<g, b >>>(gpu_data, (int)elements, threads, scale, bias);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -188,8 +191,8 @@ __global__ static void tensor_muladd_kernel(float* data, float* op, int elements
 bool FloatTensor4D::MulAdd(float scale, const FloatTensor4D& right) {
 	if (NULL == gpu_data || elements != right.elements) return false;
 	if (1.0f == scale) return Add(right);
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_muladd_kernel <<<g, b >>>(gpu_data, right.gpu_data, (int)elements, threads, scale);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -209,8 +212,8 @@ __global__ static void tensor_addscale_kernel(float* data, float* op, int elemen
 bool FloatTensor4D::AddScale(const FloatTensor4D& right, float scale) {
 	if (NULL == gpu_data || elements != right.elements) return false;
 	if (1.0f == scale) return Add(right);
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	int threads = g * b;
 	tensor_addscale_kernel <<<g, b >>>(gpu_data, right.gpu_data, (int)elements, threads, scale);
 	cudaError_t err = cudaDeviceSynchronize();
@@ -235,8 +238,8 @@ struct sample_params {
 
 	int batchs;
 	int channels;
-	float stride_w;
-	float stride_h ;
+	int stride_w;
+	int stride_h ;
 	bool  is_nchw;
 
 };
@@ -374,8 +377,8 @@ bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h
 		return false;
 	}
 	
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);  
+	int g = GPUGridSize();
+	int b = GPUBlockSize();  
 	sample_params params = {
 		gpu_data , width, height, elements_2d, elements_3d,
 		result.gpu_data, result.width, result.height, result.elements_2d, result.elements_3d,
@@ -410,9 +413,9 @@ __global__ static void tensor_random_kernel(float* data, int elements, int threa
 }
 bool FloatTensor4D::Randomize(float min_, float max_) {
 	if (0 == elements) return false;
-	int g = GPUGridSize(9999);
-	int b = GPUBlockSize(9999);
-	tensor_random_kernel <<<g, b >>>(gpu_data, elements, g * b, GetTickCount(), min_, max_);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	tensor_random_kernel <<<g, b>>>(gpu_data, elements, g * b, GetTickCount(), min_, max_);
 	cudaError_t err = cudaDeviceSynchronize();
 	return (err == cudaSuccess);
 }
@@ -430,8 +433,8 @@ __global__ void backward_bias_kernel(float *bias_updates, float *delta, int batc
 	}
 }
 bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size) {
-	int g = GPUGridSize(99999);
-	int b = GPUBlockSize(99999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 	backward_bias_kernel <<<g,b>>>(bias_updates, delta, batch, channels, size);
 	cudaError_t err = cudaDeviceSynchronize();
 	return err == cudaSuccess;
@@ -465,3 +468,51 @@ bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channel
 	return err == cudaSuccess;
 }
 */
+__global__ static void f32_to_f16_kernel(__half* dst, const float* src, size_t n) {
+	int threads = gridDim.x * blockDim.x;
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	while (index < n) {
+		dst[index] = __float2half(src[index]);
+		index += threads;
+	}
+}
+bool f32_to_f16(__half* dst, const float* src, size_t n) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	f32_to_f16_kernel<<<g, b>>>(dst, src, n);
+	cudaError_t err = cudaDeviceSynchronize();
+	return err == cudaSuccess;
+}
+__global__ static void f16_to_f32_kernel(float* dst, const __half* src, size_t n) {
+	int threads = gridDim.x * blockDim.x;
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	while (index < n) {
+		dst[index] = __half2float(src[index]);
+		index += threads;
+	}
+}
+bool f16_to_f32(float* dst, const __half* src, size_t n) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	f16_to_f32_kernel<<<g, b>>>(dst, src, n);
+	cudaError_t err = cudaDeviceSynchronize();
+	return err == cudaSuccess;
+}
+__global__ static void calc_weights_for_ir_kernel(float* w, const float* factors, int c_in, int size, int elements) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x; 
+	while (index < elements) { 
+		int c = (index / size) % c_in; 
+		w[index] *= factors[c];		
+		index += threads;
+	}
+}
+bool calc_weights_for_ir(float* w, const float* factors, int c_in, int size, int elements) {
+ 
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	calc_weights_for_ir_kernel<<<g,b>>>(w,factors, c_in, size, elements);
+	cudaError_t err = cudaDeviceSynchronize();
+
+	return err == cudaSuccess;
+}

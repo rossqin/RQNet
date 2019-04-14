@@ -180,7 +180,7 @@ bool FloatTensor4D::Concat(int b, int c, const float * src, int src_c, int src_w
 void FloatTensor4D::DumpToFile(const string& filename, int b, int c) const { 
 	if (filename.length() == 0 || 0 == elements ) return;
 	if (b < 0 || c < 0) {
-		char* temp = CopyToCPU();
+		float* temp = reinterpret_cast<float*>(CopyToCPU());
 		char line[100];
 		ofstream f(filename, ios::trunc);
 		int index = 0;
@@ -252,7 +252,7 @@ float* FloatTensor4D::RestoreDataFromCPU() {
 	return (e == cudaSuccess ) ? gpu_data : NULL ;
 }
 #endif
-bool FloatTensor4D::CopyDataFromCPU(void * data, size_t data_bytes, DataType data_type, uint16_t dims[4]) {
+bool FloatTensor4D::CopyDataFromCPU(void * data, int data_bytes, DataType data_type, uint16_t dims[4]) {
 	if (0 == bytes) return false;
 	if (data_bytes >= bytes) {
 		return cudaSuccess ==  cudaMemcpy(gpu_data, data, bytes,cudaMemcpyHostToDevice); 
@@ -306,3 +306,4 @@ bool FloatTensor4D::SaveBatchData(const string & filename, int b) {
 	delete[]data;
 	return true;
 }
+ 

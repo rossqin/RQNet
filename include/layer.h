@@ -41,5 +41,6 @@ public:
 	bool GetCost(float& val) const { return false; }
 	int  MemRequired() const { return 0; }
 	unsigned int GetWorkspaceSize() const { return 0; }
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
 
 };

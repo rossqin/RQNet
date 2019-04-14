@@ -31,7 +31,7 @@ Image::Image(int w, int h, int c, float val) {
 		if (0.0 == val)
 			memset(data, 0, e * sizeof(float));
 		else {
-			for (int i = 0; i < e; i < e)
+			for (int i = 0; i < e; i++)
 				data[i] = val;
 		}
 	}
@@ -225,10 +225,10 @@ bool Image::Gray(bool rgb /* = true */) {
 	if (!PullFromGPU()) return false;
 	float f[3];
 	if (rgb) {
-		f[0] = 0.299; f[1] = 0.587, f[2] = 0.114;
+		f[0] = 0.299f; f[1] = 0.587f, f[2] = 0.114f;
 	}
 	else {
-		f[0] = 0.2126; f[1] = 0.7152, f[2] = 0.0722;
+		f[0] = 0.2126f; f[1] = 0.7152f, f[2] = 0.0722f;
 	}
 	int new_size = width * height;
 	float* new_data = New float[new_size];

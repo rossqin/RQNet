@@ -4,12 +4,12 @@
 #define _STD_AFX_H_ 
 #define _CRT_RAND_S 1
  
-# pragma warning (disable:4819)
+
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cudnn.h>
 #include <curand_kernel.h>
-
+#include <cuda_fp16.h>
 
 #include <iostream>
 #include <fstream>
@@ -23,7 +23,8 @@
 #include <chrono>
 #include <random>
 
-#ifdef _WIN32  
+#ifdef _WIN32 
+#pragma warning (disable:4819 4244)
 #include <Windows.h>
 #endif
 #ifdef _DEBUG
@@ -72,6 +73,9 @@ void dump_mem(float* data, int n);
 void split_string(vector<string>& result, const string& str, char ch = ',');  
 const char* replace_extension(string& str, const char* new_ext);
 void show_usage(const char* bin);
+bool f32_to_f16(__half* dst, const float* src, size_t n);
+bool f16_to_f32(float* dst, const __half* src, size_t n);
+const char* get_dir_from_full_path(string& path);
 #define FULL_DEBUGGING 1
 #define DEBUGGING_DIR "\\AI\\Data\\debugging\\RQNet\\"
 #endif

@@ -99,8 +99,8 @@ __global__ void backward_maxpool_kernel(maxpool_params p, int elements, int thre
 bool forward_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* indexes, int window_w, int window_h, int pad_w, int pad_h, int stride_w, int stride_h) {
 	if (output.MemElements() == 0 || input.MemElements() == 0) return false;
 
-	int g = GPUGridSize(99999);
-	int b = GPUBlockSize(99999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 
 	int threads = g * b;
 
@@ -132,8 +132,8 @@ bool forward_maxpool(FloatTensor4D& output, const FloatTensor4D& input, int* ind
 
 bool backward_maxpool(FloatTensor4D& prev_delta, const FloatTensor4D& delta, int* indexes, int window_w, int window_h, int pad_w, int pad_h, int stride_w, int stride_h) {
 	if (prev_delta.MemElements() == 0 || delta.MemElements() == 0) return false;
-	int g = GPUGridSize(99999);
-	int b = GPUBlockSize(99999);
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
 
 	maxpool_params p = {
 		prev_delta.GetMem(),

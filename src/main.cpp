@@ -4,7 +4,7 @@
 #include "config.h"
 #include "network.h"
 #include "param_pool.h"
-
+#include <direct.h>
 using namespace std;
 
 static const char* get_file_name(const char* path) {
@@ -78,7 +78,8 @@ ArgDef defs[] = {
 	{ "-w", "", weights_message },
 	{ "-i", "", input_message },
 	{ "-o", "", output_message },
-	{ "-c","", darknet_message } 
+	{ "-c","", darknet_message },
+	{ "-t","", ""}
 }; 
 
 static void parse_cmd_line(int argc, char* argv[]) {
@@ -125,8 +126,6 @@ int main(int argc, char* argv[]) {
 		show_usage(exe);
 		return 1;
 	}
- 
-	
 
 	const char* command = argv[1];
 	argc--;
@@ -138,6 +137,7 @@ int main(int argc, char* argv[]) {
 	const char* FLAGS_i = defs[3].param;
 	const char* FLAGS_o = defs[4].param;
 	const char* FLAGS_c = defs[5].param;
+	const char* FLAGS_t = defs[6].param;
 
 	bool ret = false;
 	
@@ -155,6 +155,41 @@ int main(int argc, char* argv[]) {
 	}
 	else if (strcmp(command, "wconv") == 0) {
 		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_i, FLAGS_o); 
+	}
+	else if (strcmp(command, "openvino") == 0) {
+		string name(FLAGS_t);
+
+		string dir(FLAGS_o);
+		if (dir.empty()) {
+			dir = FLAGS_n;
+			get_dir_from_full_path(dir);
+		}
+		struct stat s = { 0 };
+		stat(dir.c_str(), &s);
+		if (0 == (s.st_mode & S_IFDIR)) {
+			if (_mkdir(dir.c_str())) {
+				cerr << "Error: Failed to create directory `" << dir << "` for output! \n";
+				return 1;
+			}
+		}
+		if (!GetNetwork().Load(FLAGS_n)) {
+			cerr << "Error: Cannot load network definition file " << FLAGS_n << endl;
+			return 1;
+		}
+		if (!GetParamPool().Load(FLAGS_w)) {
+			cerr << "Error: Cannot load weights file " << FLAGS_w << endl;
+			return 1;
+		}
+		
+		if (name.empty()) {
+			name = get_file_name(FLAGS_n);
+			replace_extension(name, ".ir");
+		}
+		if (!GetNetwork().OutputIRModel(dir, name, strcmp(FLAGS_d, "FP16") == 0)) {
+			cerr << "Error: Create Failed!\n"  ;
+			return 1;
+		}
+		cout << "INFO: successfully reated IR model !\n";
 	}
 	if(ret) return 0; 
 	return 1;

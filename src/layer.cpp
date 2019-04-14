@@ -15,7 +15,7 @@ Layer::Layer(const XMLElement* element,int i, InferenceModule*& prev_module) {
 	const XMLElement* moduleElement = element->FirstChildElement("module");
 	while (moduleElement){
 		string mtype = moduleElement->Attribute("type");
-		prev_module = InferenceModule::FromXmlElement(moduleElement,this,GetNetwork().GetDataOrder(), prev_module);
+		prev_module = InferenceModule::FromXmlElement(moduleElement,this, prev_module);
 		modules.push_back(prev_module);
 		moduleElement = moduleElement->NextSiblingElement();
 	}
@@ -83,4 +83,12 @@ bool Layer::Update(float lr) {
 
 void Layer::Print() const
 {
+}
+
+bool Layer::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, bool fp16) const{
+	for (size_t i = 0; i < modules.size(); i++) {
+		if (!modules[i]->OutputIRModel(xml, bin, edges, bin_offset, fp16)) 
+			return false;
+	}
+	return true;
 }

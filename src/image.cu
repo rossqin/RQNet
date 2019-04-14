@@ -18,11 +18,12 @@ Maximum number of threads per multiprocessor:  2048
 
 Let's use 1280 at most
 */
+
 #include "stdafx.h"
 #include "image.h" 
 
 
-__device__ const float PIXEL_NORM_FACTOR = 1.0 / 255.0;
+__device__ const float PIXEL_NORM_FACTOR = 1.0f / 255.0f;
 __global__  void img_post_read_kernel(const byte* src, float* fill, int h, int w, int c) {
 	//int threadId = blockIdx.x * blockDim.x + threadIdx.x;
 	//printf("%d of %d blocks, %d of %d threads\n", blockIdx.x, gridDim.x, threadIdx.x, blockDim.x);
@@ -533,7 +534,7 @@ bool Image::Rotate(RotateType rt) {
 		return false;
 	return true; 
 }
-constexpr float norm_factor = 1.0 / 255;
+constexpr float norm_factor = 1.0f / 255.0f;
 __global__ static void hwc_uc_2_chw_float_kernel(float* dst, const uint8_t* src, int width, int height, int channels, bool norm) {
 	int area = width * height;
 	for (int c = 0; c < channels; c++, dst += area) {
