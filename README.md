@@ -33,13 +33,17 @@ Windows 10 + Visual Studio 2015 + cuda10.1 + GTX 1060
 
   To detect objects in video:
 
-       RQNet detect -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]
+       RQNet demo -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]
  If input file is not given, then use a camera.
 
 
   To convert .weights file to .pb files:
 
-       RQNet detect -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]
+       RQNet wconv -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]
+       
+  To convert RQNet model to openvino model
+  
+       RQNet openvino -n <path/to/network/defintion> -w <path/to/weights> [-o <dir/to/output>]
 
 
 ### ATTENSION 
