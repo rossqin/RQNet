@@ -41,9 +41,9 @@ Windows 10 + Visual Studio 2015 + cuda10.1 + GTX 1060
 
        RQNet wconv -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]
        
-  To convert RQNet model to openvino model
+  To convert RQNet model to openvino model, if "-d" option is not given, FP32 is used.
   
-       RQNet openvino -n <path/to/network/defintion> -w <path/to/weights> [-o <dir/to/output>]
+       RQNet openvino -n <path/to/network/defintion> -w <path/to/weights> [-o <dir/to/output>] [-d FP16|FP32] [-t model_name]
 
 
 ### ATTENSION 
