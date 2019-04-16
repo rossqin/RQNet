@@ -13,13 +13,13 @@ ModulePool& GetModulePool() {
 	return network.module_pool;
 }
 CNNNetwork::CNNNetwork() {
- 
-	data_order = TO_NCHW;
-	data_type = DT_FLOAT32; 
-	workspace = NULL;
+	data_type = CUDNN_DATA_FLOAT; 
+	data_format = CUDNN_TENSOR_NCHW;
+	workspace = nullptr;
 	workspace_size = 0;
 	def_actvation = "leaky";
-	truths = NULL;
+	truths = nullptr;
+	input = nullptr;
 }
 
 CNNNetwork::~CNNNetwork() {
@@ -30,25 +30,26 @@ CNNNetwork::~CNNNetwork() {
 	for (auto m = module_pool.begin(); m != module_pool.end(); m++) {
 		delete m->second;
 	} 
-	if (truths)
-		delete[]truths;
+	if (truths) delete[]truths;
+	if (input) delete[] input;
 }
-static DataType get_data_type(const string& str) {
+static cudnnDataType_t get_data_type(const string& str) {
 	if (str == "FP32") {
-		return DT_FLOAT32;
+		return CUDNN_DATA_FLOAT;
 	}
 	else if(str == "FP16"){
-		return DT_UINT16;
+		return CUDNN_DATA_HALF;
 	}
  
 	cerr << "Error: data type `" << str << "` has not been supported yet. set to FP32.\n";
-	return DT_FLOAT32;
+	return CUDNN_DATA_FLOAT;
 	 
 }
  
 bool CNNNetwork::Load(const char* filename) {
 	tinyxml2::XMLDocument doc;
 	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
+	mini_batch = GetAppConfig().GetBatch() / GetAppConfig().GetSubdivision();
 
 	XMLElement* root = doc.RootElement();
 	if (!root) return false;
@@ -58,12 +59,12 @@ bool CNNNetwork::Load(const char* filename) {
 		string str;
 		inputElement->QueryText("data_order", str);
 		if (str == "NCHW")
-			data_order = TO_NCHW;
+			data_format = CUDNN_TENSOR_NCHW;
 		else if (str == "NHWC")
-			data_order = TO_NHWC;
+			data_format = CUDNN_TENSOR_NHWC;
 		else {
 			cerr << "Error: `" << str << "` is not a valid data order. ignore, set to NCHW.\n";
-			data_order = TO_NCHW;
+			data_format = CUDNN_TENSOR_NCHW;
 		}
 		str = "";
 		inputElement->QueryText("data_type", str);
@@ -74,8 +75,7 @@ bool CNNNetwork::Load(const char* filename) {
 		inputElement->QueryIntText("channels", input_channels);
 		inputElement->QueryIntText("width", input_width);
 		inputElement->QueryIntText("height", input_height);
-		if(!input.Init(GetAppConfig().GetMiniBatch(), input_channels, input_width, input_height, data_order))
-			return false;
+		input = New float[mini_batch * input_channels * input_width * input_height];
 	}
 	XMLElement* anchorElement = root->FirstChildElement("anchors/anchor");
 	while (anchorElement) {
@@ -90,11 +90,11 @@ bool CNNNetwork::Load(const char* filename) {
 	int index = 0;
 	InferenceModule* last_module = NULL;
 	while (layerElement) {
-		Layer* layer = New Layer(layerElement,++index, last_module);
+		Layer* layer = New Layer(layerElement,++index,this, last_module);
 		layers.push_back(layer);
 		layerElement = layerElement->NextSiblingElement();
 	}
-	truths = New ObjectInfo[GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths()];
+	truths = New ObjectInfo[mini_batch * GetAppConfig().GetMaxTruths()];
 	return true;
 }
 
@@ -125,7 +125,7 @@ bool CNNNetwork::Forward(bool training) {
 		GetAppConfig().ConvParamsFreezed(),
 		GetAppConfig().BNParamsFreezed(),
 		GetAppConfig().ActParamsFreezed(),
-		input,
+		nullptr,
 		GetAppConfig().GetMaxTruths(),
 		truths };
 	for (int i = 0; i < (int)layers.size(); i++) {
@@ -138,8 +138,8 @@ bool CNNNetwork::Forward(bool training) {
 	return true;
 } 
 bool CNNNetwork::Backward() {
-	FloatTensor4D d; 
-	for (int i = layers.size() - 1; i >= 0; i--) { 
+	CudaTensor d(data_type,data_format); 
+	for (int i = (int)layers.size() - 1; i >= 0; i--) { 
 		Layer* l = layers[i];
 		if (!l->Backward(d)) {
 			cerr << "Error: " << l->GetName() << " backwawd failed!\n";
@@ -172,20 +172,19 @@ bool CNNNetwork::Train() {
 	int new_width, new_height;
 	string weights_file;
 	float avg_loss = -1.0;  
- 
+	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
+	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
 		it++;
 		clock_t start_clk = clock(); 		
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
- 
+	
 			//cout << "\nSubdivision " << i << ": loading data ... ";
-			long t = GetTickCount();
-			input = 0.0f;
-			size_t len = GetAppConfig().GetMiniBatch() * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
-			memset(truths, 0, len);
-			input = 0.0f; 
-			if (!loader.MiniBatchLoad(input, truths)) return false;  
+			long t = GetTickCount();			
+			memset(truths, 0, truth_len);
+			memset(input, 0,  input_len);
+			if (!loader.MiniBatchLoad(input, truths,input_channels,mini_batch,input_width, input_height)) return false;  
 			t = GetTickCount() - t;
 			//cout << " in " << (t * 0.001) << " secs.\n";
 			
@@ -206,7 +205,7 @@ bool CNNNetwork::Train() {
 		 
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
-			ofs << setw(10) << it << ", " <<  input.GetWidth()<< ", " << input.GetHeight()<< ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
+			ofs << setw(10) << it << ", " << input_width  << ", " << input_height  << ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
 			ofs.close();
 		}
 		
@@ -218,16 +217,17 @@ bool CNNNetwork::Train() {
 			GetParamPool().Save(weights_file.c_str(),it);
 		} 
 		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
-			(new_width != input.GetWidth() || new_height != input.GetHeight()) ) {
+			(new_width != input_width || new_height != input_width) ) {
 			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
 			cudaError_t err = cudaPeekAtLastError();
 			if (err != cudaSuccess) {
 				cerr << "cuda Error:" << (int)err << endl;
 			}
-			if (!input.Init(GetAppConfig().GetMiniBatch(), input.GetChannels(),
-				new_width, new_height, input.GetOrder())) {
-				return false;
-			}
+			input_width = new_width;
+			input_height = new_height;
+			input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
+			input = (float*)realloc(input, input_len);
+
 		} 
 		
 	}
@@ -258,9 +258,9 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp1
 	xml << "        <output>" << endl;
 	xml << "          <port id = \"0\">" << endl;
 	xml << "            <dim>" << 1 << "</dim>" << endl;
-	xml << "            <dim>" << input.GetChannels() << "</dim>" << endl;
-	xml << "            <dim>" << input.GetHeight() << "</dim>" << endl;
-	xml << "            <dim>" << input.GetWidth() << "</dim>" << endl;
+	xml << "            <dim>" << input_channels << "</dim>" << endl;
+	xml << "            <dim>" << input_height << "</dim>" << endl;
+	xml << "            <dim>" << input_width << "</dim>" << endl;
 	xml << "          </port>" << endl;
 	xml << "        </output>" << endl;
 	xml << "    </layer>" << endl;

@@ -39,9 +39,6 @@
     <ClCompile Include="src\param_pool.cpp">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\tensor.cpp">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\tinyxml2.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -57,11 +54,11 @@
     <ClCompile Include="src\pooling_module.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\cuda_tensor.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\tensor.h">
-      <Filter>include</Filter>
-    </ClInclude>
     <ClInclude Include="include\stdafx.h">
       <Filter>include</Filter>
     </ClInclude>
@@ -95,18 +92,12 @@
     <ClInclude Include="include\data_loader.h">
       <Filter>include</Filter>
     </ClInclude>
-    <ClInclude Include="include\cuda_ptr.h">
+    <ClInclude Include="include\cuda_tensor.h">
       <Filter>include</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="src\activation.cu">
-      <Filter>src</Filter>
-    </CudaCompile>
     <CudaCompile Include="src\image.cu">
-      <Filter>src</Filter>
-    </CudaCompile>
-    <CudaCompile Include="src\maxpool_patch.cu">
       <Filter>src</Filter>
     </CudaCompile>
     <CudaCompile Include="src\tensor.cu">

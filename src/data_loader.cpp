@@ -8,8 +8,8 @@ int rot_index = 0;
 int mini_batch_rotate = 0;
 bool DataLoader::ImagePostLoad(Image & image,  ImageLabelParseInfo & info) {
 
-	info.actual_w = GetNetwork().input.GetWidth();
-	info.actual_h = GetNetwork().input.GetHeight();
+	//info.actual_w = GetNetwork().input.GetWidth();
+	//info.actual_h = GetNetwork().input.GetHeight();
 	info.orig_w = image.GetWidth();
 	info.orig_h = image.GetHeight();
 	info.crop_l = info.crop_t = 0; 
@@ -261,10 +261,9 @@ const char* rotate_to_str(RotateType rt) {
 		return "normal";
 	}
 }
-bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_data ) {
+bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channels, int mini_batch, int width, int height) {
 	
-	int mini_batch = GetAppConfig().GetMiniBatch(); 
-
+ 
 	//Image image;
 	ImageLabelParseInfo info = { 0 };
 
@@ -273,9 +272,10 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 	info.max_boxes = GetAppConfig().GetMaxTruths();
 	info.small_object = GetAppConfig().SmallObjEnabled() ;
 	info.classes = (int)ds->GetClasses();
- 
-
-	FloatTensor4D& input = GetNetwork().input; 
+	info.actual_w = width;
+	info.actual_h = height;
+	
+	int image_size = channels * width * height;
 
  
 	for (int i = 0, index = start_index; i < mini_batch; i++, index++) { 
@@ -288,17 +288,17 @@ bool DataLoader::MiniBatchLoad(FloatTensor4D & image_data, ObjectInfo* truth_dat
 		//cout << "*** loading " << info.file_name << " *** \n";
 		long t1 = GetTickCount();
 		Image image;
-		if (!image.Load(info.file_name, input.GetChannels())) return false;  
+		if (!image.Load(info.file_name, channels)) return false;  
 		
 		long t2 = GetTickCount() ;
 		//cout << " --- image file loaded in "<< (t2 - t1) << "ms. ---\n";
 		if (!ImagePostLoad(image, info)) return false; 
 
-		
+		if (!image.PullFromGPU()) return false;
 		t1 = GetTickCount();
 		//cout << " --- post loaded processed in "<<(t1 - t2)<<"ms. ---\n"; 
-		
-		if(!input.Set3DData(i, image.GetGPUData())) return false;
+		memcpy(input, image.GetData(), image_size * sizeof(float)); 
+		input += image_size;
 		t2 = GetTickCount();
 		//cout << " --- append to input in "<<(t2 - t1)<<"ms. ---\n";
 		string label_path(info.file_name);

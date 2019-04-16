@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "tensor.h"
+#include "cuda_tensor.h"
 #include "config.h" 
 
 #include <io.h>

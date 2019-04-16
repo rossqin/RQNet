@@ -96,6 +96,7 @@
     <ClCompile Include="src\box.cpp" />
     <ClCompile Include="src\config.cpp" />
     <ClCompile Include="src\conv_module.cpp" />
+    <ClCompile Include="src\cuda_tensor.cpp" />
     <ClCompile Include="src\data_loader.cpp" />
     <ClCompile Include="src\image.cpp" />
     <ClCompile Include="src\inference_module.cpp" />
@@ -104,7 +105,6 @@
     <ClCompile Include="src\network.cpp" />
     <ClCompile Include="src\param_pool.cpp" />
     <ClCompile Include="src\pooling_module.cpp" />
-    <ClCompile Include="src\tensor.cpp" />
     <ClCompile Include="src\tinyxml2.cpp" />
     <ClCompile Include="src\utils.cpp" />
     <ClCompile Include="src\yolo.cpp" />
@@ -113,21 +113,18 @@
     <ClInclude Include="include\activation.h" />
     <ClInclude Include="include\box.h" />
     <ClInclude Include="include\config.h" />
-    <ClInclude Include="include\cuda_ptr.h" />
+    <ClInclude Include="include\cuda_tensor.h" />
     <ClInclude Include="include\data_loader.h" />
     <ClInclude Include="include\image.h" />
     <ClInclude Include="include\inference_module.h" />
     <ClInclude Include="include\layer.h" />
     <ClInclude Include="include\param_pool.h" />
     <ClInclude Include="include\stdafx.h" />
-    <ClInclude Include="include\tensor.h" />
     <ClInclude Include="include\network.h" />
     <ClInclude Include="include\yolo.h" />
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="src\activation.cu" />
     <CudaCompile Include="src\image.cu" />
-    <CudaCompile Include="src\maxpool_patch.cu" />
     <CudaCompile Include="src\tensor.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

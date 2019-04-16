@@ -1,20 +1,22 @@
 #include "stdafx.h"
 #include "network.h"
 #include "param_pool.h"
-#include "tensor.h"
+#include "cuda_tensor.h"
 #include "yolo.h"
 #include "inference_module.h"
 #include "config.h"
 const float one = 1.0f, zero = 0.0f;
-InferenceModule::InferenceModule(const XMLElement* element, Layer* l, InferenceModule* prev) {
+ 
+InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev) 
+	: input(net->DataType(), net->DataFormat()), output(net->DataType(), net->DataFormat()), 
+	shortcut_delta(net->DataType(), net->DataFormat()) {
 	if (prev)
 		index = prev->index + 1;
 	else
 		index = 1;
+	network = net;
 	output_port = 3;
 	layer = l;
-	y_desc = NULL;
-	x_desc = NULL;
 	input_channels = 0;
 	input_height = 0;
 	input_width = 0;
@@ -55,9 +57,9 @@ void InferenceModule::GetPrevModules(const XMLElement* element) {
 		}
 	}
 	else {
-		input_channels = GetNetwork().GetInputChannels();
-		input_width = GetNetwork().GetInputWidth();
-		input_height = GetNetwork().GetInputHeight();
+		input_channels = network->input_channels;
+		input_width = network->input_width;
+		input_height = network->input_height;
 	}
 	
 	if (prevs.size() > 1) {
@@ -65,27 +67,27 @@ void InferenceModule::GetPrevModules(const XMLElement* element) {
 	}
 }
  
-InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Layer* layer, InferenceModule* prev) {
+InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev) {
 	const char *t = element->Attribute("type");
 	string mtype(t ? t : "");
 	InferenceModule* module = NULL;
 	if (mtype == "conv" || mtype == "convolutional") {
-		module = New ConvolutionalModule(element, layer, prev);
+		module = New ConvolutionalModule(element, layer, network, prev);
 	}
 	else if (mtype == "batch-norm" ) {
-		module = New BatchNormModule(element, layer, prev);
+		module = New BatchNormModule(element, layer, network, prev);
 	}
 	else if(mtype == "activation") {
-		module = New ActivationModule(element, layer, prev);
+		module = New ActivationModule(element, layer, network, prev);
 	}
 	else if (mtype == "max-pool" || mtype == "avg-pool") {
-		module = New PoolingModule(element, layer, prev);
+		module = New PoolingModule(element, layer, network, prev);
 	}
 	else if (mtype == "upsample") {
-		module = New UpSampleModule(element, layer, prev);
+		module = New UpSampleModule(element, layer, network, prev);
 	}
 	else if (mtype == "yolo-detection") {
-		module = New YoloModule(element, layer, prev);
+		module = New YoloModule(element, layer, network, prev);
 	}
 	//TODO: Add your New Moule here.
 
@@ -113,86 +115,77 @@ void InferenceModule::WritePorts(ofstream& xml) const {
 	xml << "      </output>" << endl;
 }
 bool InferenceModule::PrepareShortcutDelta() {
-	if (shortcut_delta.SameDememsion(output))
+	if (shortcut_delta.SameShape(output))
 		return true;
-	return shortcut_delta.InitFrom(output);
+	return shortcut_delta.Init(input.Batch(), input.Channel(), input.Height(), input.Width());
 }
-bool InferenceModule::UpdateShortcutDelta(const FloatTensor4D& delta) {
-	if (shortcut_delta.MemElements() == 0) {
+bool InferenceModule::UpdateShortcutDelta(const CudaTensor& delta) {
+	if (shortcut_delta.Elements() == 0) {
 		shortcut_delta = delta;
 		return true;
 	}
-	if (shortcut_delta.SameDememsion(delta)) {
+	if (shortcut_delta.SameShape(delta)) {
 		return shortcut_delta.Add(delta);
 	}
 	return false;
 }
 bool InferenceModule::Forward(ForwardContext & context) {
-	int n = prevs.size();
-	int batch = GetAppConfig().GetMiniBatch();
-	//first time, w == 0, h == 0;
-
+	int n = (int)prevs.size();  
 	int w = 0;
 	int h = 0;
 
 	if (n == 1) {
-		input = prevs[0]->output;
-		w = input.GetWidth();
-		h = input.GetHeight();
+		input = *(context.input);//prevs[0]->output;
+		w = input.Width();
+		h = input.Height();
 	}
 	else if (n > 1) {
 		input = 0.0f;		
-		TensorOrder to = GetNetwork().GetDataOrder();
+		vector<const CudaTensor*> srcs;
 		for (int i = 0; i < n; i++) {
-			if (prevs[i]->output.GetHeight() > h)
-				h = prevs[i]->output.GetHeight();
-			if (prevs[i]->output.GetWidth() > w)
-				w = prevs[i]->output.GetWidth();
+			if (prevs[i]->output.Height() > h)
+				h = prevs[i]->output.Height();
+			if (prevs[i]->output.Width() > w)
+				w = prevs[i]->output.Width();
+			srcs.push_back(&(prevs[i]->output));
 		} 
 		if (w != input_width || h != input_height) {
-			if (!input.Init(batch, input_channels, w, h, to)) return false;
+			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
 		}
 		else {
 			input = 0.0f;
 		}
-		for (int b = 0; b < batch; b++) { 
-			for (int i = 0, c = 0; i < n; i++) {
-				FloatTensor4D& o = prevs[i]->output; 
-				size_t elements = o.Elements3D();
-				float* src = o.GetMem() + b * elements;	
-				if(!input.Concat(b, c, src, o.GetChannels(), o.GetWidth(),o.GetHeight()))
-					return false;
-				c += o.GetChannels(); 
-			}
-		}		
+		if (!input.Concat(srcs)) return false;
 	}
 	else {
-		input = context.input;
-		w = input.GetWidth();
-		h = input.GetHeight();
+		//input = context.input;
+		w = network->input_width;
+		h = network->input_height;
+		if (input_width != w || input_height != h) {
+			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
+			if(!input.Push(network->input)) return false;
+		}
 	}
 	if (input_width != w || input_height != h) {
-		input_width = w;
-		input_height = h;
-		if (!InitDescriptors()) return false; 
-		if (!output.Init(batch, output_channels, output_width, output_height, input.GetOrder())) return false;
+		if (!Resize(w, h)) return false; 
+		if (!output.Init(input.Batch(), output_channels, output_height, output_width)) return false;		
 	}
-	
+	context.input = &output;
 	return true;
 }
  
-bool InferenceModule::Backward(FloatTensor4D & delta) {
-	if (delta.MemElements() == 0 && shortcut_delta.MemElements() != 0) {
+bool InferenceModule::Backward(CudaTensor & delta) {
+	if (delta.Elements() == 0 && shortcut_delta.Elements() != 0) {
 		delta = shortcut_delta;
 		return shortcut_delta.Release();
 	}
-	if (delta.SameDememsion(shortcut_delta)) {
+	if (delta.SameShape(shortcut_delta)) {
 		if(!delta.Add(shortcut_delta)) return false;
 		return shortcut_delta.Release();
 	}
 	return true;
 }
-bool InferenceModule::DistributeDeltas(FloatTensor4D & delta) {
+bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	int n = prevs.size();
 	if (n == 0) return true;
 	if (n < 2) {
@@ -202,17 +195,14 @@ bool InferenceModule::DistributeDeltas(FloatTensor4D & delta) {
 		}
 		return true;
 	}
+	vector<CudaTensor*> prev_deltas;
 	for (int i = 0, c = 0; i < n; i++) {
-		InferenceModule* module = prevs[i];
-		int c_prev = module->output.GetChannels();
+		InferenceModule* module = prevs[i]; 
 		if (!module->PrepareShortcutDelta()) return false;
-		for (int b = 0; b < delta.GetBatch(); b++) {
-			float* src = delta.GetMem() + (b * delta.GetChannels() + c) * delta.Elements2D();
-			if (!module->shortcut_delta.Concat(b, 0, src, c_prev,  delta.GetWidth(), delta.GetHeight()))
-				return false;
-		}
-		c += c_prev;
+		prev_deltas.push_back(&(module->shortcut_delta)); 
 	} 
+	if (!delta.Split(prev_deltas))
+		return false;
 	return delta.Release(); 
 }
 
@@ -255,65 +245,90 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 	return true;
 }
  
-bool ActivationModule::InitDescriptors() { 
+bool ActivationModule::Resize(int w, int h) { 
+	input_height = h;
+	input_width = w;
 	output_width = input_width; 
 	output_height = input_height; 
-	return true; 
+	
+	return CUDNN_STATUS_SUCCESS == cudnnSetActivationDescriptor(a_desc, mode, CUDNN_NOT_PROPAGATE_NAN, 0.0);
 }
 
-ActivationModule::ActivationModule(const XMLElement* element, Layer* l, InferenceModule* prev):
-InferenceModule(element,l,prev){
+ActivationModule::ActivationModule(const XMLElement* element, Layer* l,CNNNetwork* net, InferenceModule* prev):
+InferenceModule(element, l, net, prev){
+
+	a_desc = NULL;
+	mode = CUDNN_ACTIVATION_RELU;
+	
 	factor = 0.1f;
 	const char* a = element->Attribute("method");
-	string str(a ? a : GetNetwork().DefaultActivation().c_str());
-	if(str == "leaky") atype = LEAKY;
-	else if (str == "linear") atype = LINEAR;
-	else if (str == "logistic") atype = LOGISTIC;	
-	else if (str == "relu") atype = RELU;
-	else if (str == "lhtan") atype = LHTAN;
-	else if (str == "hardtan") atype = HARDTAN;
-	else if (str == "tanh") atype = TANH;
-	else if (str == "loggy") atype = LOGGY;
-	else if (str == "elu") atype = ELU;
-	else if (str == "relie") atype = RELIE;
-	else if (str == "plse") atype = PLSE;
-	else if (str == "ramp") atype = RAMP;
-	else if (str == "stair") atype = STAIR; 
-	else atype = LINEAR;
+	string str(a ? a : net->DefaultActivation().c_str());
+	if (str == "leaky" || str == "relu") {
+		mode = CUDNN_ACTIVATION_RELU;
+		cudnnCreateActivationDescriptor(&a_desc);
+	}
+	else if (str == "tanh") {
+		mode = CUDNN_ACTIVATION_TANH;
+		cudnnCreateActivationDescriptor(&a_desc);
+	}
+	else if (str == "elu") {
+		mode = CUDNN_ACTIVATION_ELU;
+		cudnnCreateActivationDescriptor(&a_desc);
+	}
+	else if (str == "sigmoid" || str == "logistic") {
+		mode = CUDNN_ACTIVATION_SIGMOID;
+		cudnnCreateActivationDescriptor(&a_desc);
+	}
+	else if(str != "linear") {
+		cerr << " Warning: Unsupported activation type `" << str << "` has been ignored!\n";
+	}
+
+
 	GetPrevModules(element);
-	InitDescriptors();
+	output_width = input_width;
+	output_height = input_height;
 	output_channels = input_channels;
+}
+
+ActivationModule::~ActivationModule() {
+	if(a_desc) cudnnDestroyActivationDescriptor(a_desc);
 }
 
 bool ActivationModule::Forward(ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false;
-	output = input; 
-	bool ret = activate_array_ongpu(output.GetMem(),output.MemElements(),atype); 
-	return ret;
+	if (!a_desc) return true;
+	return CUDNN_STATUS_SUCCESS == cudnnActivationForward(GetCUDNNHandle(), a_desc, &one, 
+		input.Descriptor(), input, &zero, output.Descriptor(), output);
 }
- 
-bool ActivationModule::Backward(FloatTensor4D & delta) {
+bool ActivationModule::Backward(CudaTensor & delta) {
 	
-	if (!InferenceModule::Backward(delta)) return false;
-	if (!output.SameDememsion(delta)) return false;
-	if (!gradient_array_ongpu(output.GetMem(),delta.GetMem(),output.MemElements(), atype))
-		return false ;
+	if (!InferenceModule::Backward(delta)) return false; 
+	if (a_desc) { 
+		if (CUDNN_STATUS_SUCCESS !=
+			cudnnActivationBackward(GetCUDNNHandle(), a_desc, &one, output.Descriptor(), output, 
+				delta.Descriptor(), delta, input.Descriptor(),input,&zero,delta.Descriptor(),delta))
+			return false;
+	}
 	return DistributeDeltas(delta);
 }
 bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
  
 	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
 	string t;
-	switch (atype) {
-	case LEAKY:
-	case RELU:
-		t = "ReLU";
+	switch (mode) {
+	case CUDNN_ACTIVATION_RELU: 
+		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"ReLU\">" << endl;
+		xml << "      <data negative_slope=\"" << factor << "\" />" << endl;
+		break;
+	case CUDNN_ACTIVATION_SIGMOID:
+		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" >" << endl;
+		xml << "      <data type=\"sigmoid\" />" << endl;
 		break;
 	default:
+		cerr << " Error: Activation type other than sigmoid or Relu is not supported yet!\n";
 		return false;
 	} 
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"" << t << "\">" << endl;
-	xml << "      <data negative_slope=\"" << factor << "\" />" << endl;
+	
 	WritePorts(xml);
 	xml << "    </layer>" << endl;
 	return true;
@@ -322,21 +337,23 @@ uint32_t ActivationModule::GetFlops() const {
 	return 0;
 }
 
-UpSampleModule::UpSampleModule(const XMLElement * element, Layer * l, InferenceModule* prev) :
-	InferenceModule(element, l, prev) {
+UpSampleModule::UpSampleModule(const XMLElement * element, Layer * l, CNNNetwork* network, InferenceModule* prev) :
+	InferenceModule(element, l, network, prev) {
  
 	stride_w = element->IntAttribute("stride-w", 2);
 	stride_h = element->IntAttribute("stride-h", 2); 
  
 	GetPrevModules(element);
-	InitDescriptors();
+	output_width = input_width * stride_w;
+	output_height = input_height * stride_h;
 	output_channels = input_channels;
 }
 
 UpSampleModule::~UpSampleModule() {
 }
-bool UpSampleModule::InitDescriptors() {
- 
+bool UpSampleModule::Resize(int w,int h) {
+	input_height = h;
+	input_width = w;
 	output_width = input_width * stride_w;
 	output_height = input_height * stride_h; 
 	return true;
@@ -347,11 +364,14 @@ bool UpSampleModule::Forward( ForwardContext & context) {
 	return ret;
 }
 
-bool UpSampleModule::Backward(FloatTensor4D & delta) {
+bool UpSampleModule::Backward(CudaTensor & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
-	input = 0.0f;
-	if (!delta.DownSample(input, stride_w, stride_h)) return false; 
-	delta = input;  
+	CudaTensor temp(network->DataType(), network->DataFormat());
+	temp = delta;
+	if(!delta.Init(input.Batch(), input.Channel(), input.Height(), input.Width())) {
+		return false;
+	}
+	if (!temp.DownSample(delta, stride_w, stride_h)) return false; 
 	return DistributeDeltas(delta);
 }
 bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
@@ -366,7 +386,7 @@ bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& e
 uint32_t UpSampleModule::GetFlops() const {
 	return 0;
 }
-DeconvModule::DeconvModule(const XMLElement * element, Layer * l, InferenceModule* prev) : InferenceModule(element, l, prev) {
+DeconvModule::DeconvModule(const XMLElement * element, Layer * l, CNNNetwork* network, InferenceModule* prev) : InferenceModule(element, l, network, prev) {
  
 }
 
@@ -378,7 +398,7 @@ bool DeconvModule::Forward(ForwardContext & context) {
 	return false;
 }
 
-bool DeconvModule::Backward(FloatTensor4D & delta) {
+bool DeconvModule::Backward(CudaTensor & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
 	return DistributeDeltas(delta); 
 }

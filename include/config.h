@@ -68,7 +68,7 @@ protected:
 	bool small_object;
 
 	string update_strategy;
-	
+	 
 public :
 	
 	AppConfig();
@@ -92,8 +92,7 @@ public :
 
 
 	inline int GetBatch() const { return batch; }
-	inline int GetSubdivision() const { return subdivision; }
-	inline int GetMiniBatch() const { return batch / subdivision; }
+	inline int GetSubdivision() const { return subdivision; } 
 
 	inline bool MultiScaleEnable() const { return ms_enable; }
 	inline int GetMultiScaleInterval() const { return ms_interval; }
@@ -116,6 +115,7 @@ public :
 	bool DataAugument(FloatTensor4D& image) const ;
 	float GetCurrentLearningRate(int iteration) const;
 	
+
 	
 }; 
 AppConfig& GetAppConfig();

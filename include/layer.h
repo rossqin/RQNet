@@ -1,15 +1,16 @@
 #pragma once
-#include "tensor.h"
 #include "tinyxml2.h"
 using namespace tinyxml2;
 class InferenceModule;
 struct ObjectInfo;
+class CudaTensor;
+class CNNNetwork;
 struct ForwardContext {
 	bool training;
 	bool freezeConvParams;
 	bool freezeBNParams;
 	bool freezeActParams;  
-	FloatTensor4D& input;
+	CudaTensor* input;
 	int max_truths_per_batch;
 	ObjectInfo* truths;
 
@@ -19,19 +20,20 @@ protected:
 	int index;
 	string name;
 	vector<InferenceModule*> modules;
-
+	CNNNetwork* network;
 public:
 	// for debugging
-	FloatTensor4D saveDelta;
 	InferenceModule* last_module;
-	Layer(const XMLElement* element, int i, InferenceModule*& prev_module);
+	Layer(const XMLElement* element, int i, CNNNetwork* net, InferenceModule*& prev_module);
 	inline int GetIndex() const { return index; }
 	inline const string& GetName() const { return name; }
 
 
 	~Layer() {}
 	bool Forward(ForwardContext& context)  ;
-	bool Backward(FloatTensor4D& delta) ;
+	bool Backward(CudaTensor& delta) ;
+
+	bool FuseBatchNormModule();
 
 	bool Update(float lr);
  

@@ -29,7 +29,7 @@ public:
 	DataLoader() { start_index = 0; }
 	~DataLoader() {}
 
-	bool MiniBatchLoad(FloatTensor4D& image_data, ObjectInfo* truth_data );
+	bool MiniBatchLoad(float* input, ObjectInfo* truth_data, int channels, int mini_batch, int width, int height);
 
 
 };

@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "tensor.h"
+#include "cuda_tensor.h"
 #include "param_pool.h"
 #include "config.h"
 static ParamPool thePool;
@@ -16,8 +16,8 @@ ParamPool::~ParamPool() {
 	}
 }
 
-void ParamPool::Put(string key, FloatTensor4D* tensor) {
-	uninit_params.insert(pair<string, FloatTensor4D*>(key, tensor)); 
+void ParamPool::Put(string key, CudaTensor* tensor) {
+	uninit_params.insert(pair<string, CudaTensor*>(key, tensor));
 }
 
 bool ParamPool::Load(const char * filename) {
@@ -43,11 +43,11 @@ bool ParamPool::Load(const char * filename) {
 		auto it = uninit_params.find(name); 
 		
 		if (it != uninit_params.end()) {
-			FloatTensor4D* tensor = it->second; 
+			CudaTensor* tensor = it->second; 
 			//TODO: check tensor order
 			char* buf = New char[data_header.bytes];
 			f.read(buf, data_header.bytes);
-			tensor->CopyDataFromCPU(buf, data_header.bytes, data_header.data_type, data_header.dims);
+			tensor->Push(buf, data_header); 
 			delete[]buf;
 			 
 			params.insert(*it);
@@ -81,7 +81,7 @@ bool ParamPool::Save(const char * filename, int i) {
 	}
 	size_t written = 0;
 	uint8_t* str_buf = New uint8_t[str_bytes];
-	uint32_t index = 0;
+	size_t index = 0;
 	for (auto it = params.begin(); it != params.end(); it++) {
 		str_buf[index ++] = (uint8_t) it->first.length();
 		memcpy(str_buf + index, it->first.c_str(), it->first.length());
@@ -97,26 +97,28 @@ bool ParamPool::Save(const char * filename, int i) {
 	tensor_data_header data_header;
 	index = 0;
 	for (auto it = params.begin(); it != params.end(); it++) {
-		data_header.data_type = DT_FLOAT32;
+		data_header.data_type = CUDNN_DATA_FLOAT;
 		data_header.name_index = index;
-		FloatTensor4D* tensor = it->second;
-		data_header.dims[0] = tensor->GetBatch();
-		if (tensor_order == TO_NCHW) {
-			data_header.dims[1] = tensor->GetChannels();
-			data_header.dims[2] = tensor->GetHeight();
-			data_header.dims[3] = tensor->GetWidth();
+		CudaTensor* tensor = it->second;
+		data_header.dims[0] = tensor->Batch();
+		if (tensor->DataFormat() == CUDNN_TENSOR_NCHW) {
+			data_header.dims[1] = tensor->Channel();
+			data_header.dims[2] = tensor->Height();
+			data_header.dims[3] = tensor->Width();
 		}
 		else {			
-			data_header.dims[1] = tensor->GetHeight();
-			data_header.dims[2] = tensor->GetWidth();
-			data_header.dims[3] = tensor->GetChannels();
+			data_header.dims[1] = tensor->Height();
+			data_header.dims[2] = tensor->Width();
+			data_header.dims[3] = tensor->Channel();
 		}
-		data_header.bytes = tensor->MemBytes();
+		data_header.bytes = tensor->Bytes();
 
 		f.write(reinterpret_cast<char*>(&data_header), sizeof(tensor_data_header));
 		written += sizeof(tensor_data_header); 
-		char* cpu_data = tensor->CopyToCPU();
-		f.write(cpu_data, tensor->MemBytes());
+
+		char* cpu_data = New char[tensor->Bytes()];
+		cudaMemcpy(cpu_data, tensor->Data(), tensor->Bytes(),cudaMemcpyDeviceToHost);
+		f.write(cpu_data, tensor->Bytes());
 		delete[]cpu_data;
 
 		index += (it->first.length() + 1); 
@@ -126,7 +128,7 @@ bool ParamPool::Save(const char * filename, int i) {
 }
  
 
-FloatTensor4D * ParamPool::GetParameter(const string& key) {
+CudaTensor * ParamPool::GetParameter(const string& key) {
 	auto it = params.find(key);
 	if(it != params.end()) return NULL;
 	return it->second;
@@ -326,12 +328,12 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 		netfile << "\t</anchors>\n\t<layers>\n";
 		string before("none"); 
 		int index = 1;
-		string param_name;
-		FloatTensor4D* tensor;
+		string param_name; 
+		CudaTensor *tensor;
+		float* cpu_data;
 		for (DarknetLayer& l : layers) { 
 			if(l.layer_type != DLT_ROUTE) 
-				netfile << "\t\t<layer id=\"" << l.output_id << "\">\n";
-			char* cpu_data = NULL;
+				netfile << "\t\t<layer id=\"" << l.output_id << "\">\n"; 
 			switch (l.layer_type) {
 			case DLT_CONVOLUTIONAL:
 				
@@ -344,12 +346,14 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					before = "normalization";
 					param_name = l.output_id;
 					param_name += ".normalization";
-					tensor = New FloatTensor4D();
-					tensor->Init(4, l.filters, 1,1, TO_NCHW);
-					params.insert(pair<string, FloatTensor4D*>(param_name, tensor));
-					cpu_data = tensor->CopyToCPU();
-					weightsfile.read(cpu_data, tensor->MemBytes());
-					cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
+					tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);
+					tensor->Init(4, l.filters, 1,1);
+					params.insert(pair<string, CudaTensor*>(param_name, tensor));
+					cpu_data = New float[tensor->Elements()];
+					weightsfile.read(reinterpret_cast<char*>(cpu_data), tensor->Bytes());
+					cout << "Load " << param_name << ": " << tensor->Bytes() << " bytes.\n";
+					tensor->Push(cpu_data);
+					delete[]cpu_data;
 				}
 				else {
 					netfile << "\t\t\t<module  type=\"conv\"  id=\"convolution\" filters=\"" << l.filters
@@ -359,26 +363,29 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					before = "convolution";
 					param_name = l.output_id;
 					param_name += ".convolution.bias";
-					tensor = New FloatTensor4D();
-					tensor->Init(1, l.filters, 1, 1, TO_NCHW);
-					params.insert(pair<string, FloatTensor4D*>(param_name, tensor));
-					cpu_data = tensor->CopyToCPU();
-					weightsfile.read(cpu_data, tensor->MemBytes());
-					cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
+					CudaTensor *tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);
+					tensor->Init(1, l.filters, 1, 1);
+					params.insert(pair<string, CudaTensor*>(param_name, tensor));
+					cpu_data = New float[tensor->Elements()];
+					weightsfile.read(reinterpret_cast<char*>(cpu_data), tensor->Bytes());
+					cout << "Load " << param_name << ": " << tensor->Bytes() << " bytes.\n";
+					tensor->Push(cpu_data);
+					delete[]cpu_data;
 				}
 				param_name = l.output_id;
 				param_name += ".convolution.weights";
-				tensor = New FloatTensor4D();
-				
-				tensor->Init(l.filters, l.channels, l.size, l.size, TO_NCHW);
+				tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);				
+				tensor->Init(l.filters, l.channels, l.size, l.size);
 				if (param_name == "layer20.weights") {
-					cout << " dim [" << tensor->GetBatch() << ", " << tensor->GetChannels() << ", " << tensor->GetHeight()
-						<< ", " << tensor->GetWidth() << "]\n";
-				}
-				cpu_data = tensor->CopyToCPU();
-				weightsfile.read(cpu_data, tensor->MemBytes());
-				cout << "Load " << param_name << ": " << tensor->MemBytes() << " bytes.\n";
-				params.insert(pair<string,FloatTensor4D*>(param_name, tensor));
+					cout << " dim [" << tensor->Batch() << ", " << tensor->Channel() << ", " << tensor->Height()
+						<< ", " << tensor->Width() << "]\n";
+				} 
+				cpu_data = New float[tensor->Elements()];
+				weightsfile.read(reinterpret_cast<char*>(cpu_data), tensor->Bytes());
+				cout << "Load " << param_name << ": " << tensor->Bytes() << " bytes.\n";
+				tensor->Push(cpu_data);
+				delete[]cpu_data;
+				params.insert(pair<string, CudaTensor*>(param_name, tensor));
 				netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation 
 					<< "\" before=\"" << before << "\" />\n";
 				sprintf(l.last_module, "%s.activation", l.output_id);
@@ -420,11 +427,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				netfile << "\t\t\t<module id=\"yolo\" type=\"yolo-detection\" before=\"" << before 
 					<< "\" ignore-thresh=\"0.7\" truth-thresh=\"1.0\" anchor-masks=\"" << l.anchors << "\" />\n";
 				before = "";
-			}
-			if (cpu_data) {
-				delete[]cpu_data;
-				cpu_data = NULL;
-			}
+			} 
 			if (l.layer_type != DLT_ROUTE)
 				netfile << "\t\t</layer>\n";
 

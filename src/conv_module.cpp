@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "tensor.h"
+#include "cuda_tensor.h"
 #include "config.h"
 #include "network.h"
 #include "param_pool.h"
@@ -7,53 +7,37 @@
 #include <memory>
 
 ConvolutionalModule::~ConvolutionalModule() {
-	if (x_desc) cudnnDestroyTensorDescriptor(x_desc);
-	if (y_desc) cudnnDestroyTensorDescriptor(y_desc);
-	if (w_desc) cudnnDestroyFilterDescriptor(w_desc);
 	if (conv_desc) cudnnDestroyConvolutionDescriptor(conv_desc);
-	if (db_desc) cudnnDestroyTensorDescriptor(db_desc);
+	if (w_desc) cudnnDestroyFilterDescriptor(w_desc);
 }
 
 ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
-	Layer * l, InferenceModule* prev) : InferenceModule(element, l, prev) {
-	db_desc = NULL;
-	conv_desc = NULL;
-	w_desc = NULL;
-	followed_bn_module = NULL;
+	Layer * l, CNNNetwork* net, InferenceModule* prev) : InferenceModule(element, l,net, prev) ,
+	w(net->DataType(),net->DataFormat()),
+	dw(net->DataType(),net->DataFormat()),
+	bias(net->DataType(), net->DataFormat()), 
+	dbias(net->DataType(), net->DataFormat()){
+	 
+	conv_desc = nullptr; 
+	w_desc = nullptr;
 	output_channels = element->IntAttribute("filters", 1);
 	int width = element->IntAttribute("filter-w", 1);
 	int height = element->IntAttribute("filter-h", 1);
-	bool hasBias = element->BoolAttribute("bias", false);
-	TensorOrder order = GetNetwork().GetDataOrder();
-	cudnnTensorFormat_t cudnn_order = (order == TO_NCHW) ? CUDNN_TENSOR_NCHW : CUDNN_TENSOR_NHWC;
+	bool hasBias = element->BoolAttribute("bias", false); 
 	GetPrevModules(element);
 
 	if (hasBias) {
-		dbias.Init(1, output_channels, 1, 1, order);
+		dbias.Init(1, output_channels, 1, 1);
 		bias = dbias;
 		GetParamPool().Put(name + ".bias", &bias);
-		cudnnCreateTensorDescriptor(&db_desc);
-		if (db_desc) {
-			cudnnSetTensor4dDescriptor(db_desc, cudnn_order, CUDNN_DATA_FLOAT, 1, output_channels, 1, 1);
-		}
 	}
+	 
 
-	cudnnCreateTensorDescriptor(&x_desc);
-	cudnnCreateTensorDescriptor(&y_desc);
-	cudnnCreateFilterDescriptor(&w_desc);
+	
 
-	cudnnCreateConvolutionDescriptor(&conv_desc);
-
-
-	w.Init(output_channels, input_channels, width, height, order);
-	dw.Init(output_channels, input_channels, width, height, order);
-	if (w_desc != NULL) {
-		if (CUDNN_STATUS_SUCCESS != cudnnSetFilter4dDescriptor(w_desc, CUDNN_DATA_FLOAT, cudnn_order,
-			output_channels, input_channels, height, width)) {
-			cudnnDestroyFilterDescriptor(w_desc);
-			w_desc = NULL;
-		}
-	}
+	w.Init(output_channels, input_channels, width, height);
+	dw.Init(output_channels, input_channels, width, height);
+	
 	GetParamPool().Put(name + ".weights", &w);
 
 	bool padding = element->BoolAttribute("padding", true);
@@ -71,13 +55,22 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 
 	dilation_w = element->IntAttribute("dilation-w", 1);
 	dilation_h = element->IntAttribute("dilation-h", 1);
-
-	if (conv_desc != NULL) {
+	
+	cudnnCreateFilterDescriptor(&w_desc);
+	if (w_desc) {
+		if (CUDNN_STATUS_SUCCESS != cudnnSetFilter4dDescriptor(w_desc, net->DataType(), net->DataFormat(),
+			output_channels, input_channels, height, width)) {
+			cudnnDestroyFilterDescriptor(w_desc);
+			w_desc = nullptr;
+		}
+	}
+	cudnnCreateConvolutionDescriptor(&conv_desc);
+	if (conv_desc) {
 		if (CUDNN_STATUS_SUCCESS != cudnnSetConvolution2dDescriptor(conv_desc,
 			padding_h, padding_w, stride_h, stride_w, dilation_h, dilation_w,
-			CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT)) {
+			CUDNN_CROSS_CORRELATION, net->DataType())) {
 			cudnnDestroyConvolutionDescriptor(conv_desc);
-			conv_desc = NULL;
+			conv_desc = nullptr;
 		}
 #if(CUDNN_MAJOR >= 7)
 		// Tensor Core uses CUDNN_TENSOR_OP_MATH instead of CUDNN_DEFAULT_MATH
@@ -98,50 +91,51 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	fwd_algo = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM;
 	bwdd_algo = CUDNN_CONVOLUTION_BWD_DATA_ALGO_0;
 	bwdf_algo = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0;
-	InitDescriptors();
+	Resize(input_width, input_height);
 }
 
 bool ConvolutionalModule::Forward(ForwardContext & context) {
 	if (!InferenceModule::Forward(context)) return false;
 	float one = 1.0f, zero = 0.0f;
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
-		x_desc, input.GetMem(), w_desc, w.GetMem(), conv_desc, fwd_algo,
-		GetNetwork().workspace, GetNetwork().workspace_size, &zero, y_desc, output.GetMem());
+		input.Descriptor(), input , w_desc, w, conv_desc, fwd_algo,
+		GetNetwork().workspace, GetNetwork().workspace_size, &zero, output.Descriptor(), output);
 	if (status != CUDNN_STATUS_SUCCESS) {
 		cerr << "Error: Forwarding failed in `" << name << "`. Error code :" << (int)status << endl;
 		return false;
 	}
-	if (bias.GetChannels() != 0) {
+	if (bias.Channel() == output_channels) {
 		return output.Add(bias);
 	}
 	return true;
 }
-bool ConvolutionalModule::Backward(FloatTensor4D & delta) {
+bool ConvolutionalModule::Backward(CudaTensor& delta) {
 
 	if (!InferenceModule::Backward(delta)) return false;
 	cudnnHandle_t handle = GetCUDNNHandle();
 	float one = 1.0f,zero = 0.0f;
-	if (bias.GetChannels() != 0) {
-		cudnnConvolutionBackwardBias(handle, &one, y_desc, delta.GetMem(), &one, db_desc, dbias.GetMem());
+	if (bias.Channel() == output_channels) {
+		cudnnConvolutionBackwardBias(handle, &one, delta.Descriptor(), delta, &one, dbias.Descriptor(), dbias);
 	}
-	cudnnStatus_t status = cudnnConvolutionBackwardFilter(handle, &one, x_desc, input.GetMem(),
-		y_desc, delta.GetMem(), conv_desc, bwdf_algo, GetNetwork().workspace,
-		GetNetwork().workspace_size, &one, w_desc, dw.GetMem());
+	cudnnStatus_t status = cudnnConvolutionBackwardFilter(handle, &one, input.Descriptor(), input,
+		delta.Descriptor(), delta, conv_desc, bwdf_algo, GetNetwork().workspace,
+		GetNetwork().workspace_size, &one, w_desc, dw);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: backward filter failed in`" << name << "`! Error code :" << (int)status << endl;
 		return false;
 	}
-	FloatTensor4D temp = delta;
-	if (!delta.InitFrom(input)) return false;
-	status = cudnnConvolutionBackwardData(handle, &one, w_desc, w.GetMem(),
-		y_desc, temp.GetMem(), conv_desc, bwdd_algo, GetNetwork().workspace,
-		GetNetwork().workspace_size, &zero, x_desc, delta.GetMem());
+	CudaTensor temp = delta;
+	if (!delta.Init(input.Batch(), input_channels, input_height, input_width)) return false;
+	status = cudnnConvolutionBackwardData(handle, &one, w_desc, w,
+		temp.Descriptor(), temp, conv_desc, bwdd_algo, GetNetwork().workspace,
+		GetNetwork().workspace_size, &zero, delta.Descriptor(), delta);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: backward data failed in`" << name << "`. Error code :" << (int)status << endl;
 		return false;
 	}
 	return DistributeDeltas(delta);
 }
+extern bool sgd_update(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, float decay, float momentum);
 
 bool ConvolutionalModule::UpdateParams(float lr) {
 
@@ -153,35 +147,37 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 	}
 	float m = cfg.Momentum();
 	float decay = (0.0f - cfg.Decay()) *  cfg.GetBatch();
+	lr /= cfg.GetBatch();
 	if (cfg.UpdateStrategy() == "SGD") {
-		if (bias.GetChannels() != 0) {
-			if (!dbias.AddScale(bias, decay)) return false;
-			if (!bias.AddScale(dbias, lr)) return false;
-			if (!dbias.Mul(m)) return false;
+		if (bias.Channel() != output_channels) {
+			if(!sgd_update(bias, dbias, output_channels, bias.DataType(), lr , decay, m)) return false;
+
 		}
+		if (!sgd_update(w, dw, w.Elements(), w.DataType(), lr, decay, m)) return false; 
 
-		if (!dw.AddScale(w, decay)) return false;
-		if (!w.AddScale(dw, lr)) return false;
-		if (!dw.Mul(m)) return false;
-
-	}
-	dw = 0.0f;
-	dbias = 0.0f;
+	} 
 	return true;
 }
 
-bool ConvolutionalModule::InitDescriptors() {
-	if (NULL == x_desc || NULL == y_desc || NULL == conv_desc || NULL == w_desc) return false;
-	int b = GetAppConfig().GetMiniBatch();
+bool ConvolutionalModule::Resize(int w, int h) {
+	if (!conv_desc || ! w_desc) return false;
+	int b = network->MiniBatch();
 
-	cudnnTensorFormat_t f = (input.GetOrder() == TO_NCHW) ? CUDNN_TENSOR_NCHW : CUDNN_TENSOR_NHWC;
-	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(x_desc, f, CUDNN_DATA_FLOAT, b, input_channels, input_height, input_width))
-		return false;
+	cudnnTensorDescriptor_t x_desc = input.Descriptor();
+	cudnnTensorDescriptor_t y_desc = input.Descriptor();
+	bool created = false;
+	if (!x_desc) {
+		cudnnCreateTensorDescriptor(&x_desc);
+		cudnnSetTensor4dDescriptor(x_desc, input.DataFormat(), input.DataType(), b, input_channels, h, w);
+		cudnnCreateTensorDescriptor(&y_desc);
+		created = true;
+	}
+
 	int c;
 	if (CUDNN_STATUS_SUCCESS != cudnnGetConvolution2dForwardOutputDim(conv_desc, x_desc, w_desc, &b, &c, &output_height, &output_width))
 		return false;
 	//TODO: assert(c == output_channels)
-	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(y_desc, f, CUDNN_DATA_FLOAT, b, output_channels, output_height, output_width))
+	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(y_desc, output.DataFormat(), output.DataType(), b, output_channels, output_height, output_width))
 		return false;
 
 	cudnnHandle_t handle = GetCUDNNHandle();
@@ -199,6 +195,12 @@ bool ConvolutionalModule::InitDescriptors() {
 	if (w1 < w2) w1 = w2;
 	if (w1 < w3) w1 = w3;
 	GetNetwork().UpdateWorkspace(w1);
+	if (created) {
+		cudnnDestroyTensorDescriptor(x_desc);
+		cudnnDestroyTensorDescriptor(y_desc);
+	}
+	input_width = w;
+	input_height = h;
 	return true;
 }
 
@@ -215,62 +217,33 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"Convolution\">" << endl;
 	xml << "      <data auto_pad=\"same_upper\" dilations=\"" << dilation_h << "," << dilation_w
-		<< "\" group=\"1\" kernel=\"" << w.GetHeight() << "," << w.GetWidth() << "\" output=\"" << output_channels
+		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << output_channels
 		<< "\" pads_begin=\"" << padding_h << "," << padding_w << "\" pads_end=\"" << padding_h << "," << padding_w
 		<< "\" strides=\"" << stride_h << "," << stride_w << "\"/>" << endl;
 	WritePorts(xml);
 	xml << "      <blobs>" << endl;
-	int length_w = 0;
-	int length_b = 0;
-	FloatTensor4D tensor_w = w;
-	FloatTensor4D tensor_b;
-	if (!tensor_b.Init(1, output_channels, 1, 1, TO_NCHW)) return false;
-
+ 
 	 
-	unique_ptr<char> bias_cpu(new char[output_channels * sizeof(float)]);
-	unique_ptr<char> w_cpu(new char[tensor_w.MemBytes()]);
-	if (followed_bn_module) {
-		if(!followed_bn_module->CalcWeightsForIR(tensor_w, tensor_b))
-			return false;
-	}
-	else {	 
-		if (bias.MemElements() == output_channels) {
-			tensor_b = bias;
-		}
-	}
-
-	if (fp16) {
-		length_w = tensor_w.MemElements() * sizeof(__half);
-		CudaPtr<__half> temp(tensor_w.MemElements());
-		if (!f32_to_f16(temp, tensor_w, tensor_w.MemElements())) return false;
-		if(!temp.ToCPU(w_cpu.get())) return false;
-
-		length_b = output_channels * sizeof(__half);
-		if (!f32_to_f16(temp, tensor_b, output_channels)) return false;
-		if (!temp.ToCPU(bias_cpu.get(), length_b)) return false;
-	}
-	else {
-		length_w = tensor_w.MemBytes();
-		length_b = tensor_b.MemBytes();
-		cudaMemcpy(w_cpu.get(), tensor_w, length_w, cudaMemcpyDeviceToHost);
-		cudaMemcpy(bias_cpu.get(), tensor_b, length_b, cudaMemcpyDeviceToHost);
-	}
+	unique_ptr<char> bias_cpu(new char[w.Bytes()]);
+	unique_ptr<char> w_cpu(new char[bias.Bytes()]);
+	if (cudaSuccess != cudaMemcpy(w_cpu.get(), w, w.Bytes(), cudaMemcpyDeviceToHost)) return false;
+	if (cudaSuccess != cudaMemcpy(bias_cpu.get(), bias, bias.Bytes(), cudaMemcpyDeviceToHost)) return false;
+ 
+	
 	/*
 	Weights layout is GOIYX (GOIZYX for 3D convolution),
 	which means that X is changing the fastest, then Y, then Input, Output, then Group.
 	*/
-	bin.write(w_cpu.get(), length_w);
-	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << length_w << "\" />" << endl;
-	bin_offset += length_w;
+	bin.write(w_cpu.get(), w.Bytes());
+	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << w.Bytes() << "\" />" << endl;
+	bin_offset += w.Bytes();
 
-	bin.write(bias_cpu.get(), length_b);
-	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << length_b << "\" />" << endl;
-	bin_offset += length_b;
+	bin.write(bias_cpu.get(), bias.Bytes());
+	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << bias.Bytes() << "\" />" << endl;
+	bin_offset += bias.Bytes();
 
 	xml << "      </blobs>" << endl;
 	xml << "    </layer>" << endl;
-
-	
 	 
 	return true;
 }

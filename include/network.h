@@ -11,41 +11,55 @@ struct ObjectInfo {
 	float class_id;
 };
 #pragma pack(pop) 
- 
+class InferenceModule;
 class CNNNetwork {
 protected:
-	TensorOrder data_order;
-	DataType data_type;	
+	int mini_batch;
+	int input_channels;
+	int input_width;
+	int input_height;
+	float* input;
 	float loss;
 	vector< pair<float, float> > anchors;
 	vector<Layer *> layers;
 	ModulePool module_pool;
 	string def_actvation;
 	ObjectInfo* truths; 
+	cudnnTensorFormat_t data_format;
+	cudnnDataType_t data_type;
+	int data_size;
 	friend ModulePool& GetModulePool();
 	bool Forward(bool training = true);
 	bool Backward();
+	friend class InferenceModule;
 public:
 	size_t workspace_size;
-	void* workspace;
-	FloatTensor4D input;
+	void* workspace; 
 	
 	CNNNetwork();
 	~CNNNetwork();
-	inline int GetInputChannels() const { return input.GetChannels(); }
-	inline int GetInputHeight() const { return input.GetHeight(); }
-	inline int GetInputWidth() const { return input.GetWidth(); }
+	inline int GetInputChannels() const { return input_channels; }
+	inline int GetInputHeight() const { return input_height; }
+	inline int GetInputWidth() const { return input_width; }
+	inline int MiniBatch() const { return mini_batch; }
 	inline void RegisterLoss(float l) { loss += l; }
 	inline float GetLoss() const { return loss; } 
-	inline int GetAnchorCount() const { return (int)anchors.size(); }
-	inline TensorOrder GetDataOrder() const { return data_order; } 
+	inline int GetAnchorCount() const { return (int)anchors.size(); } 
 	inline const string& DefaultActivation() const { return def_actvation; }
+
+	inline cudnnTensorFormat_t DataFormat() const { return data_format; }
+	inline cudnnDataType_t DataType() const { return  data_type; }
+	inline int DataSize() const { return data_size; }
+
+
 
 	bool Load(const char* filename);
 	Layer* GetLayer(int index) const ;
 	bool GetAnchor(int index, float& width, float& height);
 	bool UpdateWorkspace(size_t new_size); 	
 	bool Train();
+	
+	
 	bool OutputIRModel(const string& dir, const string& name, bool fp16 = true) const;
 };
 CNNNetwork& GetNetwork();

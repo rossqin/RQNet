@@ -1,473 +1,7 @@
 #include "stdafx.h"
-#include "tensor.h"
+#include "cuda_tensor.h"
+#include <cuda_fp16.h>
 
-
-__global__ static void tensor_set_kernel(float* data, int elements, int threads, float val) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] = val;
-		index += threads;
-	}
-}
-const FloatTensor4D& FloatTensor4D::operator=(float val) {
-	if (NULL == gpu_data) return *this;
-	if (0.0 == val) {
-		fine = (cudaSuccess == cudaMemset(gpu_data, 0, bytes));
-	}
-	else {
-		int g = GPUGridSize();
-		int b = GPUBlockSize();
-		int threads = g * b;
-		tensor_set_kernel<<<g, b>>>(gpu_data, (int)elements, threads, val);
-		cudaError_t err = cudaDeviceSynchronize();
-		if (cudaSuccess != err) {
-			cerr << "Error: FloatTensor4D.operator= returned " << err << endl;
-			fine = false;
-		}
-	}
-	fine = true;
-	return *this;
-}
-__global__ static void tensor_add_kernel(float* data, const float* op, int elements, int threads) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] += op[index];
-		index += threads;
-	}
-}
-__global__ static void tensor_add_kernel_ex(float* data, const float* op, int batch, int channels, int elements ) {
-	
-	int element3d = elements * channels;
-	
-	for (int b = blockIdx.x; b < batch; b += gridDim.x) {
-		float* batch_data = data + b * element3d;
-		for (int c = threadIdx.x; c < channels; c += blockDim.x) {
-			float* channel_data = batch_data + c * elements;
-			for (int i = 0; i < elements; i++) {
-				channel_data[i] += op[c];
-			}
-		}
-	}
-	 
-	
-}
-bool FloatTensor4D::Add(const FloatTensor4D& right) {
-	if (NULL == right.gpu_data || 0 == right.elements) {
-		return true;
-	}
-	if (NULL == gpu_data) {
-		this->operator=(right); 
-		return fine;
-	} 
-	
-	if (elements == right.elements) {
-		int g = GPUGridSize();
-		int b = GPUBlockSize();
-		int threads = g * b;
-		tensor_add_kernel <<<g, b >>> (gpu_data, right.gpu_data, (int)elements, threads);
-	}
-	else if (channels == right.channels) 	{
-		int g = GPUGridSize(batch);
-		int b = GPUBlockSize(channels);
-		tensor_add_kernel_ex <<<g, b >>> (gpu_data, right.gpu_data, batch, channels ,elements_2d);
-	}		 
-	else {
-		cerr << "Not compatible!\n";
-		return false;
-	}
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-bool add_in_gpu(float* dest, const float* src, int elements) {
-	if (NULL == dest || NULL == src || 0 == elements) {
-		return false;
-	}
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_add_kernel <<<g, b>>>(dest, src, (int)elements, threads);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: add_in_gpu returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-bool FloatTensor4D::Add(const float * vals, size_t length) {
-	if (NULL == vals || length != elements) {
-		return false;
-	}
-	if (NULL == gpu_data) {		 
-		return false;
-	}
- 
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_add_kernel <<<g, b>>>(gpu_data, vals, (int)elements, threads);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
-		return false;
-	}
-	return true; 
-}
-__global__ static void tensor_add_kernel(float* data, int elements, int threads, float val) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] += val;
-		index += threads;
-	}
-}
-bool FloatTensor4D::Add(float val) {
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_add_kernel <<<g, b >>>(gpu_data, (int)elements, threads, val);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-__global__ static void tensor_mul_kernel(float* data, int elements, int threads, float val) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] += val;
-		index += threads;
-	}
-
-}
-bool FloatTensor4D::Mul(float val) {
-	if (NULL == gpu_data) return false;
-	if (1.0f == val) return true;
-	if (0.0f == val) {
-		return cudaMemset(gpu_data, 0, bytes) == cudaSuccess;
-	}
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_mul_kernel <<<g, b >>>(gpu_data, (int)elements, threads, val);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Mul returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-__global__ static void tensor_muladd_kernel(float* data, int elements, int threads, float scale, float bias) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] = scale * data[index] + bias;
-		index += threads;
-	}
-}
-bool FloatTensor4D::MulAdd(float scale, float bias) {
-	if (NULL == gpu_data) return false;
-	if (1.0f == scale) return Add(bias);
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_muladd_kernel <<<g, b >>>(gpu_data, (int)elements, threads, scale, bias);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.MulAdd returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-__global__ static void tensor_muladd_kernel(float* data, float* op, int elements, int threads, float scale) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] = scale * data[index] + op[index];
-		index += threads;
-	}
-}
-bool FloatTensor4D::MulAdd(float scale, const FloatTensor4D& right) {
-	if (NULL == gpu_data || elements != right.elements) return false;
-	if (1.0f == scale) return Add(right);
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_muladd_kernel <<<g, b >>>(gpu_data, right.gpu_data, (int)elements, threads, scale);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.MulAdd returned " << err << endl;
-		return false;
-	}
-	return true;
-}
-__global__ static void tensor_addscale_kernel(float* data, float* op, int elements, int threads, float scale) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	while (index < elements) {
-		data[index] += scale * op[index];
-		index += threads;
-	}
-}
-bool FloatTensor4D::AddScale(const FloatTensor4D& right, float scale) {
-	if (NULL == gpu_data || elements != right.elements) return false;
-	if (1.0f == scale) return Add(right);
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	int threads = g * b;
-	tensor_addscale_kernel <<<g, b >>>(gpu_data, right.gpu_data, (int)elements, threads, scale);
-	cudaError_t err = cudaDeviceSynchronize();
-	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.MulAdd returned " << err << endl;
-		return false;
-	}
-	return true;
-} 
-struct sample_params {
-	float* src_mem;
-	int src_width;
-	int src_height;
-	int src_e2d;
-	int src_e3d;
-
-	float* dst_mem;
-	int dst_width;
-	int dst_height;
-	int dst_e2d;
-	int dst_e3d;
-
-	int batchs;
-	int channels;
-	int stride_w;
-	int stride_h ;
-	bool  is_nchw;
-
-};
-__global__ static void tensor_upsample_kernel(sample_params p) {  
-	float* src = p.src_mem;
-	float* dst = p.dst_mem;
-	for (int b = 0; b < p.batchs; b++) {
-		if (p.is_nchw) {
-			for (int c = 0; c < p.channels; c++, src += p.src_e2d, dst += p.dst_e2d) {
-				for (int y = blockIdx.x; y < p.src_height; y += gridDim.x) { 
-					int dst_y = y * p.stride_h;
-					int src_off = y * p.src_width;
-					for (int x = threadIdx.x; x < p.src_width; x += blockDim.x) { 
-						int dst_x = x * p.stride_w;
-						int src_index = src_off  + x;
-						for (int i = 0; i < p.stride_h; i++) {
-							int dst_off = (dst_y + i) * p.dst_width + dst_x;
-							for (int j = 0; j < p.stride_w; j++) { 
-								dst[dst_off + j] = src[src_index];
-							}
-						}
-						
-					}
-				}
-			}
-		}
-		else { // nchw
-			src += p.src_e3d;
-			dst += p.dst_e3d;
-			for (int y = blockIdx.x; y < p.src_height; y += gridDim.x) {
-				int dst_y = y * p.stride_h;
-				int src_off = y * p.src_width;
-				for (int x = threadIdx.x; x < p.src_width; x += blockDim.x) {
-					int dst_x = x * p.stride_w;
-					int src_index = (src_off + x) * p.channels ;
-					for (int i = 0; i < p.stride_h; i++) {
-						int dst_off = (dst_y + i) * p.dst_width;
-						for (int j = 0; j < p.stride_w; j++) {
-							int dst_index = (dst_off + dst_x + j) * p.channels ;
-							for (int c = 0; c < p.channels; c++) {
-								dst[dst_index + c] = src[src_index + c];
-							}
-						}
-					}
-
-				}
-			}
-		}
-	}	
-} 
-
-bool FloatTensor4D::UpSample(FloatTensor4D& result, int stride_w, int stride_h )const {
-	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
-
-	int r_width = width * stride_w;
-	int r_height = height * stride_h;
-
-	if (result.batch != batch || result.channels != channels ||
-		result.width != r_width || result.height != r_height ||
-		result.order != order) {
-		cerr << "Error: Wrong result demension in tensor upsample !\n";
-		return false;
-	}
-
-	int g = GPUGridSize(height);
-	int b = GPUBlockSize(width);
-
-	sample_params params = {
-		gpu_data , width, height, elements_2d, elements_3d,
-		result.gpu_data, result.width, result.height, result.elements_2d, result.elements_3d,
-		batch, channels,stride_w,stride_h, order == TO_NCHW };
- 
-	tensor_upsample_kernel<<<g,b>>>(params); 
-	cudaError_t err = cudaDeviceSynchronize();
-
-	if (err != cudaSuccess) {
-		cerr << "FloatTensor4D.UpSample failed - cudaSynchronize failed err " << err << "!\n";
-		return false;
-	} 
-	return true;
-}
-__global__ static void tensor_downsample_kernel(sample_params p) {
-	int thread_index = blockIdx.x * blockDim.x + threadIdx.x;
-	
-	int total_elements = p.batchs * p.dst_e3d;
-	int threads = gridDim.x * blockDim.x;
-
-	while (thread_index < total_elements) {
-		
-		int b = thread_index / p.dst_e3d;
-		int temp = thread_index % p.dst_e3d;
-		int c, x , y ; 
-		if (p.is_nchw) {
-			c = temp / p.dst_e2d; 
-			temp %= p.dst_e2d;
-			y = temp / p.dst_width;
-			x = temp % p.dst_width; 
-			 
-			float* src = p.src_mem + b * p.src_e3d + c * p.src_e2d;
-			int src_y = y * p.stride_h;
-			for (int i = 0; i < p.stride_h; i++, src_y++) {
-				int src_x = x * p.stride_w;
-				for (int j = 0; j < p.stride_w; j++, src_x++) {
-					int src_index = src_y * p.src_width + src_x;					
-					p.dst_mem[thread_index] += src[src_index];
-				}
-			}
-		}
-		else {
-			c = temp % p.channels;
-			temp /= p.channels;
-			y = temp / p.dst_width;
-			x = temp % p.dst_width;
-			float* src = p.src_mem + b * p.src_e3d ; 
-			for (int i = 0; i < p.stride_h; i++) {
-				for (int j = 0; j < p.stride_w; j++) {
-					int src_index = (y * p.stride_h + i) * p.src_width + (x * p.stride_w) + j;
-					p.dst_mem[i] += src[src_index * p.channels + c];
-				}
-			}
-		}
-		thread_index += threads;
-	}
-}
-bool FloatTensor4D::DownSample(FloatTensor4D& result, int stride_w, int stride_h )const {
-	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
-
-	int r_width = width / stride_w;
-	int r_height = height / stride_h;
-
-	if (result.batch != batch || result.channels != channels ||
-		result.width != r_width || result.height != r_height ||
-		result.order != order) {
-		cerr << "Error: Wrong result demension in tensor upsample !\n";
-		return false;
-	}
-	
-	int g = GPUGridSize();
-	int b = GPUBlockSize();  
-	sample_params params = {
-		gpu_data , width, height, elements_2d, elements_3d,
-		result.gpu_data, result.width, result.height, result.elements_2d, result.elements_3d,
-		batch, channels,stride_w,stride_h, order == TO_NCHW};
-	
-	tensor_downsample_kernel <<<g, b>>>(params);
-	 
-	
-	cudaError_t err = cudaDeviceSynchronize();
-
-	if (err != cudaSuccess) {
-		cerr << "FloatTensor4D.DownSample failed - cudaSynchronize failed err " << err << "!\n";
-		cudaGetLastError();
-
-		return false;
-	}
-	
-	return true;
-}
-
-__global__ static void tensor_random_kernel(float* data, int elements, int threads, size_t seed, float min_, float max_) {
-	curandState s;
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
-	curand_init(seed, 0, index, &s);
-	while (index < elements) {
-		data[index] = curand_uniform(&s);
-		if (min_ != 0.0f || max_ != 1.0f) {
-			data[index] = data[index] * (max_ - min_) + min_;
-		}
-		index += threads;
-	}
-}
-bool FloatTensor4D::Randomize(float min_, float max_) {
-	if (0 == elements) return false;
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	tensor_random_kernel <<<g, b>>>(gpu_data, elements, g * b, GetTickCount(), min_, max_);
-	cudaError_t err = cudaDeviceSynchronize();
-	return (err == cudaSuccess);
-}
- 
-__global__ void backward_bias_kernel(float *bias_updates, float *delta, int batch, int channels, int size) {
-	for (int c = blockIdx.x; c < channels; c += gridDim.x) {
-		for (int b = threadIdx.x; b < batch; b += blockDim.x) {			
-			int channel_index = b * channels + c;			
-			int data_offset = channel_index * size; 
-			float* data = delta + data_offset;
-			for (int i = 0; i < size; i++) {
-				bias_updates[c] += data[i];
-			}
-		}
-	}
-}
-bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size) {
-	int g = GPUGridSize();
-	int b = GPUBlockSize();
-	backward_bias_kernel <<<g,b>>>(bias_updates, delta, batch, channels, size);
-	cudaError_t err = cudaDeviceSynchronize();
-	return err == cudaSuccess;
-}
- 
-/*
-#define BLOCK 512
-__global__ void backward_bias_kernel(float *bias_updates, float *delta, int batch, int n, int size)
-{
-	__shared__ float part[BLOCK];
-	int i, b;
-	int filter = blockIdx.x;
-	int p = threadIdx.x;
-	float sum = 0;
-	for (b = 0; b < batch; ++b) {
-		for (i = 0; i < size; i += BLOCK) {
-			int index = p + i + size*(filter + n*b);
-			sum += (p + i < size) ? delta[index] : 0;
-		}
-	}
-	part[p] = sum;
-	__syncthreads();
-	if (p == 0) {
-		for (i = 0; i < BLOCK; ++i) bias_updates[filter] += part[i];
-	}
-}
-bool backward_bias_gpu(float *bias_updates, float *delta, int batch, int channels, int size)
-{
-	backward_bias_kernel <<<channels, BLOCK >>>(bias_updates, delta, batch, channels, size);
-	cudaError_t err = cudaDeviceSynchronize();
-	return err == cudaSuccess;
-}
-*/
 __global__ static void f32_to_f16_kernel(__half* dst, const float* src, size_t n) {
 	int threads = gridDim.x * blockDim.x;
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -498,21 +32,599 @@ bool f16_to_f32(float* dst, const __half* src, size_t n) {
 	cudaError_t err = cudaDeviceSynchronize();
 	return err == cudaSuccess;
 }
-__global__ static void calc_weights_for_ir_kernel(float* w, const float* factors, int c_in, int size, int elements) {
+
+__global__ void tensor_upsample_kernel(void* dst_mem, int width, int height , void* src_mem,
+	int batch, int channels, int stride_w, int stride_h, cudnnDataType_t data_type, cudnnTensorFormat_t data_format){
+ 
+	int threads = gridDim.x * blockDim.x;
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	int threads = gridDim.x * blockDim.x; 
-	while (index < elements) { 
-		int c = (index / size) % c_in; 
-		w[index] *= factors[c];		
+	int c_size_dest = channels * width * height;
+	int elements = batch * c_size_dest;
+
+	int src_width = width / stride_w;
+	int src_height = height / stride_h;
+	int c_size_src = channels * src_width * src_height;
+
+	while (index < elements) {
+		int b = index / c_size_dest;
+		int temp = index % c_size_dest;
+		int c, h, w, index_src;
+		if (data_format == CUDNN_TENSOR_NCHW) {
+			c = temp / (width * height);
+			temp = temp % (width * height);
+			h = temp / width;
+			w = temp % width;
+			index_src = b * c_size_src + c * (src_width * src_height) +
+				(h / stride_h) * src_width + w / stride_w;
+		}
+		else {
+			h = temp / (width * channels);
+			temp = temp % (width * channels);
+			w = temp / channels;
+			c = temp % channels;
+			index_src = b * c_size_src + (h / stride_h) * (src_width * channels) +
+				(w / stride_w) * channels + c;
+		}
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* src = reinterpret_cast<float*>(src_mem);
+			float* dst = reinterpret_cast<float*>(dst_mem);
+			dst[index] = src[index_src];
+		}
+		else {
+			__half* src = reinterpret_cast<__half*>(src_mem);
+			__half* dst = reinterpret_cast<__half*>(dst_mem);
+			dst[index] = src[index_src];
+		}
+		index += threads;
+	} 
+}
+__global__ void tensor_downsample_kernel(void* dst_mem, int width, int height, void* src_mem,
+	int batch, int channels, int stride_w, int stride_h, cudnnDataType_t data_type, cudnnTensorFormat_t data_format) {
+
+	int threads = gridDim.x * blockDim.x;
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	int c_size_dest = channels * width * height;
+	int elements = batch * c_size_dest;
+
+	int src_width = width * stride_w;
+	int src_height = height * stride_h;
+	int c_size_src = channels * src_width * src_height;
+
+	while (index < elements) {
+		int b = index / c_size_dest;
+		int temp = index % c_size_dest;
+		int c, h, w,  src_h, src_w, index_src;
+		if (data_format == CUDNN_TENSOR_NCHW) {
+			c = temp / (width * height);
+			temp = temp % (width * height);
+			h = temp / width;
+			w = temp % width; 
+		}
+		else {
+			h = temp / (width * channels);
+			temp = temp % (width * channels);
+			w = temp / channels;
+			c = temp % channels; 
+		}
+		src_h = h * stride_h;
+		
+		
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* src = reinterpret_cast<float*>(src_mem);
+			float* dst = reinterpret_cast<float*>(dst_mem);
+			dst[index] = 0.0f; 
+			for (int i = 0; i < stride_h; i++, src_h++) {
+				src_w = w * stride_w;
+				for (int j = 0; j < stride_w; j++, src_w++) { 
+					if (data_format == CUDNN_TENSOR_NCHW) {
+						index_src = b * c_size_src + c * (src_width * src_height) +
+							src_h * src_width + src_w;
+					}
+					else {
+						index_src = b * c_size_src + src_h * (src_width * channels) +
+							src_w * channels + c;
+					}
+					dst[index] += src[index_src];
+				}
+			}
+		}
+		else {
+			__half* src = reinterpret_cast<__half*>(src_mem);
+			__half* dst = reinterpret_cast<__half*>(dst_mem);
+			dst[index] = __float2half(0.0f);
+			for (int i = 0; i < stride_h; i++, src_h++) {
+				src_w = w * stride_w;
+				for (int j = 0; j < stride_w; j++, src_w++) {
+					if (data_format == CUDNN_TENSOR_NCHW) {
+						index_src = b * c_size_src + c * (src_width * src_height) +
+							src_h * src_width + src_w;
+					}
+					else {
+						index_src = b * c_size_src + src_h * (src_width * channels) +
+							src_w * channels + c;
+					} 
+					dst[index] = __hadd(dst[index], src[index_src]);
+				}
+			}
+		}
 		index += threads;
 	}
 }
-bool calc_weights_for_ir(float* w, const float* factors, int c_in, int size, int elements) {
- 
+
+bool CudaTensor::UpSample(CudaTensor& output, int stride_w, int stride_h) {
+	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
+
+	int w_o = w * stride_w;
+	int h_o = h * stride_h;
+
+	if (output.n != n || output.c != c || output.w != w_o || output.h != h_o) {
+		cerr << " Error: Wrong result demension in tensor upsample !\n";
+		return false;
+	}
+	if (output.data_type != data_type || output.data_format != data_format) {
+		cerr << " Error: Inconsistent data types in tensor upsample !\n";
+		return false;
+	}
 	int g = GPUGridSize();
 	int b = GPUBlockSize();
-	calc_weights_for_ir_kernel<<<g,b>>>(w,factors, c_in, size, elements);
+	switch (data_type) {
+	case CUDNN_DATA_FLOAT:
+	case CUDNN_DATA_HALF:
+		tensor_upsample_kernel<<<g,b>>>(output.gpu_data, output.w, output.h, gpu_data, n, c, stride_w, stride_h, data_type, data_format);
+		break;
+	default:
+		cerr << " Error: Only support FP16 or FP32!\n";
+		return false;
+	}  
 	cudaError_t err = cudaDeviceSynchronize();
 
-	return err == cudaSuccess;
+	if (err != cudaSuccess) {
+		cerr << " Error: CudaTensor.UpSample failed - cudaSynchronize failed err " << err << "!\n";
+		return false;
+	}
+	return true;
+}
+bool CudaTensor::DownSample(CudaTensor& output, int stride_w, int stride_h) {
+	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
+
+	int w_o = w / stride_w;
+	int h_o = h / stride_h;
+
+	if (output.n != n || output.c != c || output.w != w_o || output.h != h_o) {
+		cerr << " Error: Wrong result demension in tensor upsample !\n";
+		return false;
+	}
+	if (output.data_type != data_type || output.data_format != data_format) {
+		cerr << " Error: Inconsistent data types in tensor upsample !\n";
+		return false;
+	}
+	int g = GPUGridSize();
+	int b = GPUBlockSize(); 
+
+	switch (data_type) {
+	case CUDNN_DATA_FLOAT:
+	case CUDNN_DATA_HALF:
+		tensor_downsample_kernel <<<g, b>>>(output.gpu_data, output.w, output.h, gpu_data, n, c, stride_w, stride_h, data_type, data_format);
+		break;
+	default:
+		cerr << " Error: Only support FP16 or FP32!\n";
+		return false;
+	}
+	cudaError_t err = cudaDeviceSynchronize();
+
+	if (err != cudaSuccess) {
+		cerr << " Error: CudaTensor.DownSample failed - cudaSynchronize failed err " << err << "!\n";
+		return false;
+	}
+	return true;
+}
+__global__ static void tensor_add_kernel(void* data, const void* op, int elements, cudnnDataType_t data_type) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+	while (index < elements) {
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float *>(data);
+			const float* src = reinterpret_cast<const float *>(op);
+			dst[index] += src[index];
+		}
+		else {
+			__half* dst = reinterpret_cast<__half *>(data);
+			const __half* src = reinterpret_cast<const __half *>(op);
+			dst[index] = __hadd(dst[index], src[index]);
+		}
+		index += threads;
+	}
+}
+__global__ static void tensor_add_kernel_ex(void* data, const void* op, int batch, int channels, int height, int width, int op_batch, cudnnDataType_t data_type, cudnnTensorFormat_t data_format) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+	int c_size = channels * height * width;
+	int elements = batch * c_size;
+	while (index < elements) {
+		int b = index / c_size;
+		int temp = index % c_size;
+		int c ;
+		if (data_format == CUDNN_TENSOR_NCHW) {
+			c = temp / (width * height);
+			temp = temp % (width * height); 
+		}
+		else {
+			//int h = temp / (width * channels);
+			temp = temp % (width * channels); 
+			c = temp % channels;
+		}
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float *>(data);
+			const float* src = reinterpret_cast<const float *>(op);
+			if(batch == op_batch )
+				dst[index] += src[b * channels + c];
+			else 
+				dst[index] += src[c];
+		}
+		else {
+			__half* dst = reinterpret_cast<__half *>(data);
+			const __half* src = reinterpret_cast<const __half *>(op);
+			if (batch == op_batch)
+				dst[index] = __hadd(dst[index], src[b * channels + c]);
+			else
+				dst[index] = __hadd(dst[index], src[c]);
+		}
+		index += threads;
+	}
+}
+
+bool CudaTensor::Add(const CudaTensor& op) {
+	if (!op.gpu_data || !op.elements) {
+		return true;
+	}
+	if (!gpu_data) {
+		(*this) = op;
+		return SameShape(op);
+	}
+	if (op.data_type != data_type || op.data_format != data_format) {
+		cerr << " Error: Inconsistent data types in tensor add !\n";
+		return false;
+	}
+	if(data_type != CUDNN_DATA_FLOAT && data_type != CUDNN_DATA_HALF){
+		cerr << " Error: Unsportted data format in tensor add !\n";
+		return false;
+	}
+	if (n != op.n && op.n != 1) {
+		cerr << " Error: Inconsistent batches in tensor add !\n";
+		return false;
+	}
+	if (elements == op.elements) {
+		int g = GPUGridSize();
+		int b = GPUBlockSize(); 
+		tensor_add_kernel <<<g, b>>> (gpu_data, op.gpu_data, elements, data_type);
+	}
+	else if (c == op.c && (op.h == 1 && op.w == 1)) {
+		int g = GPUGridSize();
+		int b = GPUBlockSize();
+		tensor_add_kernel_ex <<<g,b >>> (gpu_data, op.gpu_data, n, c, h, w, op.n, data_type, data_format);
+	}
+	else {
+		cerr << "Not compatible!\n";
+		return false;
+	}
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+__global__ static void tensor_add_kernel(void* data, float op, int elements, cudnnDataType_t data_type) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+
+	while (index < elements) {
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float *>(data); 
+			dst[index] += op;
+		}
+		else {
+			__half* dst = reinterpret_cast<__half *>(data);
+			__half hop = __float2half(op);
+			dst[index] = __hadd(dst[index], hop);
+		}
+		index += threads;
+	}
+}
+bool CudaTensor::Add(float op) {	 
+	if (!gpu_data) {
+		(*this) = op;
+		return true;
+	}	 
+	if (data_type != CUDNN_DATA_FLOAT && data_type != CUDNN_DATA_HALF) {
+		cerr << " Error: Unsportted data format in tensor add !\n";
+		return false;
+	} 
+	int g = GPUGridSize();
+	int b = GPUBlockSize(); 
+	tensor_add_kernel <<<g, b>>> (gpu_data, op, elements, data_type);
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+
+__global__ static void tensor_muladd_kernel(void* data, float op_m, float op_a, int elements, cudnnDataType_t data_type) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+
+	while (index < elements) {
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float *>(data);
+			dst[index] = op_m * dst[index] + op_a;
+		}
+		else {
+			__half* dst = reinterpret_cast<__half *>(data);
+			__half hop = __float2half(op_m);
+			dst[index] = __hmul(dst[index], hop);
+			if (op_a != 0.0f) {
+				hop = __float2half(op_a);
+				dst[index] = __hadd(dst[index], hop);
+			}
+		}
+		index += threads;
+	}
+}
+bool CudaTensor::MulAdd(float op_m, float op_a) {
+	if (!gpu_data) {
+		return false;
+	}
+	if (data_type != CUDNN_DATA_FLOAT && data_type != CUDNN_DATA_HALF) {
+		cerr << " Error: Unsportted data format in tensor add !\n";
+		return false;
+	}
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	tensor_muladd_kernel <<<g, b >>> (gpu_data, op_m, op_a, elements, data_type);
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+
+__global__ static void tensor_muladd_kernel_ex(void* data, const void* op_m, const void* op_a, int batch, int channels, int height, int width, cudnnDataType_t data_type, cudnnTensorFormat_t data_format) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+	int c_size = channels * height * width;
+	int elements = batch * c_size;
+	while (index < elements) {
+		int b = index / c_size;
+		int temp = index % c_size;
+		int c;
+		if (data_format == CUDNN_TENSOR_NCHW) {
+			c = temp / (width * height);
+			temp = temp % (width * height);
+		}
+		else {
+			//int h = temp / (width * channels);
+			temp = temp % (width * channels);
+			c = temp % channels;
+		}
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float *>(data);
+			const float* src_m = reinterpret_cast<const float *>(op_m);
+			const float* src_a = reinterpret_cast<const float *>(op_a);
+			dst[index] = dst[index] * src_m[c] + src_a[c];
+		}
+		else {
+			__half* dst = reinterpret_cast<__half *>(data);
+			const __half* src_m = reinterpret_cast<const __half *>(op_m);
+			const __half* src_a = reinterpret_cast<const __half *>(op_a);
+			__half temp = __hmul(dst[index], src_m[c]);
+			dst[index] = __hadd(temp, src_a[c]);
+		}
+		index += threads;
+	}
+}
+bool CudaTensor::MulAdd(const CudaTensor& op_m, const CudaTensor& op_a) {
+	if (!op_m.gpu_data || !op_m.elements || !op_a.gpu_data || !op_a.elements) {
+		return true;
+	}
+	if (!gpu_data) {
+		return false;
+	}
+	if (op_m.data_type != data_type || op_m.data_format != data_format
+		||op_a.data_type != data_type || op_a.data_format != data_format) {
+		cerr << " Error: Inconsistent data types in tensor multia !\n";
+		return false;
+	}
+	if (data_type != CUDNN_DATA_FLOAT && data_type != CUDNN_DATA_HALF) {
+		cerr << " Error: Unsportted data format in tensor add !\n";
+		return false;
+	}
+	if (op_m.n != 1 || op_m.c != c || op_m.w != 1 || op_m.h != 1 ||
+		op_a.n != 1 || op_a.c != c || op_a.w != 1 || op_a.h != 1) {
+		cerr << " Error: Dims of operators must be [1x"<<c<<"x1x1]!\n";
+		return false;
+	}
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	tensor_muladd_kernel_ex <<<g, b >>> (gpu_data, op_m.gpu_data, op_a.gpu_data, n, c, h, w,  data_type, data_format);
+ 
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+__global__ static void sgd_update_kernel(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, float decay, float momentum) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+	while (index < elements) {
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float*>(params);
+			float* src = reinterpret_cast<float*>(updates);
+			src[index] -= (dst[index] * decay);
+			dst[index] += (lr * src[index]);
+			src[index] *= momentum;
+		}
+		else {
+			__half* dst = reinterpret_cast<__half*>(params);
+			__half* src = reinterpret_cast<__half*>(updates);
+			__half temp = __hmul(dst[index], __float2half(decay));
+			src[index] = __hsub(src[index],temp);
+			temp = __hmul(src[index], __float2half(lr));
+			dst[index] = __hsub(dst[index], temp);
+			src[index] = __hmul(src[index] , __float2half(momentum)); 
+		}
+		index += threads;
+	}
+}
+bool sgd_update(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, float decay, float momentum) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	sgd_update_kernel<<<g, b >>>(params, updates, elements, data_type, lr, decay, momentum);
+
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+/*
+void* beta = params.BatchData(0);
+void* gamma = params.BatchData(1);
+void* running_mu = params.BatchData(2);
+void* running_var = params.BatchData(3);
+*/
+__global__ static void fuse_batchnorm_kernel(void* filters, void* bias, void* batchnorm_params, int channels, int w, int h, int channels_in, cudnnDataType_t data_type) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x;
+	int size = w * h;
+	int elements = channels * size;
+ 
+	while (index < channels) { 
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* filters_f = reinterpret_cast<float*>(filters);
+			float* bias_f = reinterpret_cast<float*>(bias);
+			float* beta = reinterpret_cast<float*>(batchnorm_params);
+			float* gamma = beta + channels;
+			float* mu = gamma + channels;
+			float* var = mu + channels;
+			float temp = gamma[index] / sqrt(var[index] * var[index] + 1.0e-5);
+			float alpha = temp / size;
+			bias_f[index] += (beta[index] - mu[index] * temp);
+			for (int i = 0; i < channels_in; i++) {
+				for (int j = 0; j < h; j++) {
+					for (int k = 0; k < w; k++) {
+						filters_f[i * elements + index * size + j * w + k] *= alpha;
+					}
+				}
+			} 
+		}
+		else {
+			__half* filters_h = reinterpret_cast<__half*>(filters);
+			__half* bias_h = reinterpret_cast<__half*>(bias);
+			__half* beta = reinterpret_cast<__half*>(batchnorm_params);
+			__half* gamma = beta + channels;
+			__half* mu = gamma + channels;
+			__half* var = mu + channels;
+
+			__half temp = __hdiv(gamma[index], hsqrt( __hadd(__hmul(var[index], var[index]), __float2half(1.0e-5))));
+		 
+			__half alpha = __hdiv(temp , __float2half(size));
+			bias_h[index] = __hadd(bias_h[index],(beta[index] - mu[index] * temp));
+			for (int i = 0; i < channels_in; i++) {
+				for (int j = 0; j < h; j++) {
+					for (int k = 0; k < w; k++) {
+						int dest_index = i * elements + index * size + j * w + k;
+						filters_h[dest_index] = __hmul(filters_h[dest_index], alpha);
+					}
+				}
+			}
+		}
+
+		index += blockDim.x * gridDim.x;
+	}
+
+
+}
+bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, int channels, int w, int h, int channels_in, cudnnDataType_t data_type) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	fuse_batchnorm_kernel<<<g, b >>>(filters, bias, batchnorm_params, channels, w, h, channels_in, data_type);
+
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << " Error: fuse_batchnorm returned " << err << endl;
+		return false;
+	}
+	return true;
+}
+__global__ static void one_stride_pooling_patch_kernel(void* out, void* in, int batch, int channels, int width, int height, cudnnDataType_t data_type, cudnnTensorFormat_t data_format, bool forwarding) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x; 
+	int threads = gridDim.x * blockDim.x;
+	int size = height * width;
+	int c_size = channels * size;
+	int elements = batch * c_size;
+	while (index < elements) {
+		int b = index / c_size;
+		int temp = index % c_size;
+		int c, w, h, index1;
+		if (data_format == CUDNN_TENSOR_NCHW) {
+			c = temp / size;
+			temp = temp % size;
+			h = temp / width;
+			w = temp % width; 
+				index1 = b * c_size + c * size + (h + 1) * (width + 1) + width + 1;
+		 
+		}
+		else {
+			size = width * channels;
+			h = temp / size;
+			temp = temp % size;
+			w = temp / channels;
+			c = temp % channels;
+			index1 = b * c_size +  + (h + 1) * (width + 1) * channels + (width + 1) * channels + c;
+		}
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* fout = reinterpret_cast<float*>(out);
+			float* fin = reinterpret_cast<float*>(in);
+			if(forwarding)
+				fout[index] = fin[index1];
+			else
+				fout[index1] = fin[index];
+		}
+		else {
+			__half* hout = reinterpret_cast<__half*>(out);
+			__half* hin = reinterpret_cast<__half*>(in);
+			if (forwarding)
+				hout[index] = hin[index1];
+			else
+				hout[index1] = hin[index];
+		}
+		index += threads;
+	}
+}
+bool one_stride_pooling_patch(CudaTensor& out, const CudaTensor& in, bool forwarding) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	int h, w;
+	if (forwarding) {
+		h = out.Height();
+		w = out.Width();
+	}
+	else {
+		h = in.Height();
+		w = in.Width();
+	}
+	one_stride_pooling_patch_kernel<<<g, b >>>(out, in,out.Batch(),out.Channel(),w,h ,
+		out.DataType(),out.DataFormat(), forwarding);
+
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << " Error: one_stride_pooling_patch returned " << err << endl;
+		return false;
+	}
+	return true;
 }

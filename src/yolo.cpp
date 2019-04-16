@@ -3,8 +3,9 @@
 #include "param_pool.h"
 #include "yolo.h"
 #include "box.h"
-YoloModule::YoloModule(const XMLElement* element, Layer* l, InferenceModule* prev): 
-	InferenceModule(element, l, prev) {
+#include <memory>
+YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev): 
+	InferenceModule(element, l,net, prev) {
 	 
 	GetPrevModules(element);
 	threshold_ignore = element->FloatAttribute("ignore-thresh",0.5);
@@ -21,20 +22,35 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, InferenceModule* pre
 	AnchorBoxItem abi;
 	for (string& s : strs) {
 		abi.masked_index = atoi(s.c_str()); 
-		if (GetNetwork().GetAnchor(abi.masked_index, abi.width, abi.height)) { 
+		if (network->GetAnchor(abi.masked_index, abi.width, abi.height)) { 
 			masked_anchors.push_back(abi);
 		}
 		
 	}
-	InitDescriptors();
+	
+
 	features = input_channels / (int)masked_anchors.size();
 	classes = features - 5;
 	if (classes < 0) { // exceptional situation
 		features = 6;
 		classes = 1;
 	}
+	pos_desc = nullptr;
+	conf_desc = nullptr;
+	a_desc = nullptr;
+	cudnnCreateActivationDescriptor(&a_desc);
+	cudnnCreateTensorDescriptor(&conf_desc);
+	cudnnCreateTensorDescriptor(&pos_desc);
+	cudnnSetActivationDescriptor(a_desc, CUDNN_ACTIVATION_SIGMOID, CUDNN_NOT_PROPAGATE_NAN, 0.0);
+	output.DataType(CUDNN_DATA_FLOAT);
+	Resize(input_width, input_width);
+	output_channels = input_channels;
+
 }
 YoloModule::~YoloModule() {
+	if (a_desc) cudnnDestroyActivationDescriptor(a_desc);
+	if (pos_desc) cudnnDestroyTensorDescriptor(pos_desc);
+	if (conf_desc) cudnnDestroyTensorDescriptor(conf_desc);
 }
 enum {
 	INDEX_PROBILITY_X = 0,
@@ -73,10 +89,10 @@ int YoloModule::EntryIndex(int anchor, int loc, int entry) {
 	return (anchor * features + entry) * output.Elements2D() + loc;
 }
 void YoloModule::DeltaBackground(float* data, float* delta, ObjectInfo* truths, int max_boxes, float& avg_anyobj) {
-	float reciprocal_w = 1.0 / output.GetWidth();
-	float reciprocal_h = 1.0 / output.GetHeight(); 
-	for (int y = 0, offset = 0; y < output.GetHeight(); y++) {
-		for (int x = 0; x < output.GetWidth(); x++, offset++) {
+	float reciprocal_w = 1.0 / output.Width();
+	float reciprocal_h = 1.0 / output.Height(); 
+	for (int y = 0, offset = 0; y < output.Height(); y++) {
+		for (int x = 0; x < output.Width(); x++, offset++) {
 			for (int n = 0; n < masked_anchors.size(); n++) { // l.n == 3
 															  // sigmoid(tx),sigmoid(ty),tw,th,Pr(Obj),Pr(Cls_0|Obj),Pr(Cls_0|Obj)...
 				int box_index = EntryIndex(n, offset, INDEX_PROBILITY_X); 
@@ -116,8 +132,8 @@ void YoloModule::DeltaBackground(float* data, float* delta, ObjectInfo* truths, 
 }
 void YoloModule::DeltaBox(float* data, float* delta, const ObjectInfo& truth, const AnchorBoxItem& anchor, int index, int x, int y) {
 
-	float tx = (truth.x * output.GetWidth() - x);
-	float ty = (truth.y * output.GetHeight() - y);
+	float tx = (truth.x * output.Width() - x);
+	float ty = (truth.y * output.Height() - y);
 	float tw = log(truth.w / anchor.width);
 	float th = log(truth.h / anchor.height);
 	float scale = (2.0f - truth.w * truth.h);
@@ -130,9 +146,13 @@ void YoloModule::DeltaBox(float* data, float* delta, const ObjectInfo& truth, co
 	index += output.Elements2D();
 	delta[index] = scale * (th - data[index]);
 }
-bool YoloModule::InitDescriptors() {
+bool YoloModule::Resize(int w, int h) {
+	input_height = h;
+	input_width = w;
 	output_width = input_width;
 	output_height = input_height;
+	cudnnSetTensor4dDescriptor(pos_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 2, output_height, output_width);
+	cudnnSetTensor4dDescriptor(conf_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, (1 + classes), output_height, output_width);
 	return true;
 }
 void YoloModule::DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat) {
@@ -176,55 +196,62 @@ void YoloModule::DeltaClass(float* data, float* delta, int class_id, int index, 
 		}
 	}
 }
- 
+const float one = 1.0, zero = 0.0;
 bool YoloModule::Forward(ForwardContext& context) {
 	if (!InferenceModule::Forward(context)) return false;
+	if (input.DataFormat() != CUDNN_TENSOR_NCHW) return false;
 	int b, n;
-	output = input;
 
-	if (shortcut_delta.SameDememsion(input))
-		shortcut_delta = 0.0f;
-	else if (!shortcut_delta.InitFrom(input))
-		return false;
+	if (input.DataType() == CUDNN_DATA_FLOAT) {
+		output = input;
+	}
+	else {
+		f16_to_f32(reinterpret_cast<float *>(output.Data()), reinterpret_cast<__half*>(input.Data()), input.Elements());
+	}
 
-	float* output_gpu = output.GetMem();
+	float* output_gpu = reinterpret_cast<float*>(output.Data());
  
 	bool ret = true;
-	for (b = 0; b < output.GetBatch(); b++) {
+	cudnnHandle_t handle = GetCUDNNHandle();
+	for (b = 0; b < output.Batch(); b++) {
 		for (n = 0; n < masked_anchors.size(); n++) {
-			int index = EntryIndex(n, 0, INDEX_PROBILITY_X);
-			if (!activate_array_ongpu(output_gpu + index, 2 * output.Elements2D(), LOGISTIC)) {
+			float* x = output_gpu + EntryIndex(n, 0, INDEX_PROBILITY_X);
+			if(CUDNN_STATUS_SUCCESS != cudnnActivationForward(handle, a_desc, &one, pos_desc, x, &zero, pos_desc, x)) {			
 				return false;
 			}
-			index = EntryIndex( n, 0, INDEX_CONFIDENCE);
-			if (!activate_array_ongpu(output_gpu + index, (1 + classes) * output.Elements2D(), LOGISTIC))
+			x = output_gpu + EntryIndex( n, 0, INDEX_CONFIDENCE);
+			if (CUDNN_STATUS_SUCCESS != cudnnActivationForward(handle, a_desc, &one, conf_desc, x, &zero, conf_desc, x)) {
 				return false;
+			}
 		}
 		output_gpu += output.Elements3D();
 	} 
 	if (!context.training) return true;
 
+	if (shortcut_delta.SameShape(input))
+		shortcut_delta = 0.0f;
+	else if (!shortcut_delta.Init(input.Batch(), input.Channel(), input.Height(), input.Width()))
+		return false;
 	float loss = 0.0;
 	float avg_iou = 0, recall = 0, recall75 = 0, avg_cat = 0;
 	float avg_obj = 0, avg_anyobj = 0;
 	int count = 0, class_count = 0;
-	float reciprocal_w = 1.0f / input.GetWidth();
-	float reciprocal_h = 1.0f / output.GetHeight();
+	float reciprocal_w = 1.0f / input.Width();
+	float reciprocal_h = 1.0f / output.Height();
 
 	int  max_boxes = context.max_truths_per_batch;
 	ObjectInfo* batch_truths = context.truths;
 	float* delta_cpu = New float[output.Elements3D()];
 	float* output_cpu = New float[output.Elements3D()]; 
+	unique_ptr<float> temp1(output_cpu), temp2(delta_cpu);
 
 	size_t batch_bytes = output.Elements3D() * sizeof(float);
 	
-	for (int b = 0; b < output.GetBatch(); b++, batch_truths += max_boxes) {
-		if (!output.Get3DData(b, output_cpu)) {
-			delete[]delta_cpu;
-			delete[]output_cpu;
+	for (int b = 0; b < output.Batch(); b++, batch_truths += max_boxes) {
+		output_gpu = reinterpret_cast<float*>(output.BatchData(b));
+		if (cudaSuccess != cudaMemcpy(output_cpu, output_gpu, batch_bytes, cudaMemcpyDeviceToHost)) { 
 			return false;
-		}
-		debugging = (12 == b);
+		} 
 		memset(delta_cpu, 0, batch_bytes); 
 		DeltaBackground(output_cpu, delta_cpu, batch_truths, max_boxes, avg_anyobj);
 		for (int t = 0; t < max_boxes; t++) {
@@ -232,13 +259,13 @@ bool YoloModule::Forward(ForwardContext& context) {
 			if (truth.class_id < 0) break;
 			float best_iou = 0;
 			int n, best_n = 0, mask_n = -1;
-			int x = (truth.x * output.GetWidth());
-			int y = (truth.y * output.GetHeight());
+			int x = (truth.x * output.Width());
+			int y = (truth.y * output.Height());
 			
 			Box truth_shift(0, 0, truth.w, truth.h);
 			float w, h;
-			for (n = 0; n < GetNetwork().GetAnchorCount(); n++) {
-				GetNetwork().GetAnchor(n, w, h);
+			for (n = 0; n < network->GetAnchorCount(); n++) {
+				network->GetAnchor(n, w, h);
 				Box pred(0, 0, w, h);
 				float iou = BoxIoU(pred, truth_shift);
 				if (iou > best_iou) {
@@ -253,7 +280,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 				}
 			}
 			if (mask_n >= 0) { // found matched anchor
-				int offset = y * output.GetWidth() + x;
+				int offset = y * output.Width() + x;
 				int box_index = EntryIndex( mask_n, offset, INDEX_PROBILITY_X);
 				DeltaBox(output_cpu, delta_cpu, truth, masked_anchors[mask_n], box_index, x, y);
 
@@ -278,19 +305,26 @@ bool YoloModule::Forward(ForwardContext& context) {
 				avg_iou += iou;
 			}
 		}
-		shortcut_delta.Set3DData(b, delta_cpu, true);
+		if (shortcut_delta.DataType() == CUDNN_DATA_FLOAT) {
+			float* delta_gpu = reinterpret_cast<float*>(shortcut_delta.BatchData(b));
+			if (cudaSuccess != cudaMemcpy(delta_gpu, delta_cpu, batch_bytes, cudaMemcpyHostToDevice))
+				return false; 
+		}
+		else {
+			__half* delta_gpu = reinterpret_cast<__half*>(shortcut_delta.BatchData(b));
+			CudaPtr<float> ptr(output.Elements3D(), delta_cpu);
+			if (!f32_to_f16(delta_gpu, ptr, output.Elements3D()))
+				return false;
+		}
 		loss += square_sum_array(delta_cpu, output.Elements3D());
 
 	}
-
-	delete[]output_cpu;
-	delete[]delta_cpu; 
 	GetNetwork().RegisterLoss(loss);
 
-	loss /= output.GetBatch();
+	loss /= network->MiniBatch();
 	 
 	ostringstream oss;
-	avg_anyobj /= output.MemElements();
+	avg_anyobj /= output.Elements();
 	oss << " " << name  <<": Found " << count << " objects with layer loss: "<< loss  ;
 	if (count > 0) {
 		avg_iou /= count;
@@ -318,7 +352,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 
 	return true;
 }
-bool YoloModule::Backward(FloatTensor4D& delta) {
+bool YoloModule::Backward(CudaTensor& delta) {
 	delta = shortcut_delta; 
 	return shortcut_delta.Release();
 }
@@ -329,7 +363,7 @@ bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges
 	//<data />
 	//<data axis="1" classes="1" coords="4" do_softmax="0" end_axis="3" mask="0,1,2" num="9"/>
 	xml << "      <data axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  
-		mask_anchor_str <<"\" num=\""<< GetNetwork().GetAnchorCount() <<"\" />" << endl;
+		mask_anchor_str <<"\" num=\""<< network->GetAnchorCount() <<"\" />" << endl;
 	WritePorts(xml);
 	xml << "    </layer>" << endl;
 	return true;
