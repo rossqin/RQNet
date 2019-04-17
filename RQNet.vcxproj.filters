@@ -103,5 +103,8 @@
     <CudaCompile Include="src\tensor.cu">
       <Filter>src</Filter>
     </CudaCompile>
+    <CudaCompile Include="src\activation.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

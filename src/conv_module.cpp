@@ -31,9 +31,9 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 		bias = dbias;
 		GetParamPool().Put(name + ".bias", &bias);
 	}
-	 
-
-	
+	if (name == "layer21.convolution") {
+		cout << "checkpoint\n";
+	}
 
 	w.Init(output_channels, input_channels, width, height);
 	dw.Init(output_channels, input_channels, width, height);
@@ -99,7 +99,7 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 	float one = 1.0f, zero = 0.0f;
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
 		input.Descriptor(), input , w_desc, w, conv_desc, fwd_algo,
-		GetNetwork().workspace, GetNetwork().workspace_size, &zero, output.Descriptor(), output);
+		network->workspace, network->workspace_size, &zero, output.Descriptor(), output);
 	if (status != CUDNN_STATUS_SUCCESS) {
 		cerr << "Error: Forwarding failed in `" << name << "`. Error code :" << (int)status << endl;
 		return false;
@@ -114,12 +114,17 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 	if (!InferenceModule::Backward(delta)) return false;
 	cudnnHandle_t handle = GetCUDNNHandle();
 	float one = 1.0f,zero = 0.0f;
+	cudnnStatus_t status;
 	if (bias.Channel() == output_channels) {
-		cudnnConvolutionBackwardBias(handle, &one, delta.Descriptor(), delta, &one, dbias.Descriptor(), dbias);
+		status = cudnnConvolutionBackwardBias(handle, &one, delta.Descriptor(), delta, &one, dbias.Descriptor(), dbias);
+		if (CUDNN_STATUS_SUCCESS != status) {
+			cerr << "Error: backward filter failed in`" << name << "`! Error code :" << (int)status << endl;
+			return false;
+		}
 	}
-	cudnnStatus_t status = cudnnConvolutionBackwardFilter(handle, &one, input.Descriptor(), input,
-		delta.Descriptor(), delta, conv_desc, bwdf_algo, GetNetwork().workspace,
-		GetNetwork().workspace_size, &one, w_desc, dw);
+	status = cudnnConvolutionBackwardFilter(handle, &one, input.Descriptor(), input,
+		delta.Descriptor(), delta, conv_desc, bwdf_algo, network->workspace,
+		network->workspace_size, &one, w_desc, dw);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: backward filter failed in`" << name << "`! Error code :" << (int)status << endl;
 		return false;
@@ -127,8 +132,8 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 	CudaTensor temp = delta;
 	if (!delta.Init(input.Batch(), input_channels, input_height, input_width)) return false;
 	status = cudnnConvolutionBackwardData(handle, &one, w_desc, w,
-		temp.Descriptor(), temp, conv_desc, bwdd_algo, GetNetwork().workspace,
-		GetNetwork().workspace_size, &zero, delta.Descriptor(), delta);
+		temp.Descriptor(), temp, conv_desc, bwdd_algo, network->workspace,
+		network->workspace_size, &zero, delta.Descriptor(), delta);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: backward data failed in`" << name << "`. Error code :" << (int)status << endl;
 		return false;
@@ -194,7 +199,7 @@ bool ConvolutionalModule::Resize(int w, int h) {
 	cudnnGetConvolutionBackwardFilterWorkspaceSize(handle, x_desc, y_desc, conv_desc, w_desc, bwdf_algo, &w3);
 	if (w1 < w2) w1 = w2;
 	if (w1 < w3) w1 = w3;
-	GetNetwork().UpdateWorkspace(w1);
+	network->UpdateWorkspace(w1);
 	if (created) {
 		cudnnDestroyTensorDescriptor(x_desc);
 		cudnnDestroyTensorDescriptor(y_desc);
@@ -224,8 +229,8 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	xml << "      <blobs>" << endl;
  
 	 
-	unique_ptr<char> bias_cpu(new char[w.Bytes()]);
-	unique_ptr<char> w_cpu(new char[bias.Bytes()]);
+	unique_ptr<char> bias_cpu(New char[w.Bytes()]);
+	unique_ptr<char> w_cpu(New char[bias.Bytes()]);
 	if (cudaSuccess != cudaMemcpy(w_cpu.get(), w, w.Bytes(), cudaMemcpyDeviceToHost)) return false;
 	if (cudaSuccess != cudaMemcpy(bias_cpu.get(), bias, bias.Bytes(), cudaMemcpyDeviceToHost)) return false;
  

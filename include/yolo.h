@@ -27,9 +27,7 @@ protected:
 	float threshold_ignore;
 	float threshold_thruth; 
 	string mask_anchor_str;
-	vector<AnchorBoxItem> masked_anchors;
-	cudnnActivationDescriptor_t a_desc;
-	cudnnTensorDescriptor_t pos_desc, conf_desc;
+	vector<AnchorBoxItem> masked_anchors; 
 	int EntryIndex(int anchor, int loc, int entry);
 	void DeltaBackground(float* data, float* delta, ObjectInfo* truths, int max_boxes, float& avg_anyobj);
 	void DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat = NULL);

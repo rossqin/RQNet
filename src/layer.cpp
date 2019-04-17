@@ -25,13 +25,14 @@ Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*&
 bool Layer::Forward(ForwardContext & context) {
 	//int n = -1;
 	for(size_t i = 0 ; i < modules.size(); i++){
-		if (!modules[i]->Forward(context)) {
+		InferenceModule* module = modules[i];
+		if (!module->Forward(context)) {
 			cerr << "Forward failed at " << modules[i]->name << endl;
 			return false;
 		}
-		// char filename[MAX_PATH];
-		// sprintf(filename, "%s%s.output.bin", DEBUGGING_DIR, name.c_str());
-		//modules[i]->output.SaveBatchData(filename, -1);
+		//char filename[MAX_PATH];
+		//sprintf(filename, "%s%s.output.bin", DEBUGGING_DIR, module->name.c_str());
+		//module->output.Save(filename,1);
 		//n = i; 
 	}
 	return true;
@@ -39,7 +40,10 @@ bool Layer::Forward(ForwardContext & context) {
 
 bool Layer::Backward(CudaTensor & delta) {
 	for (int i = (int)modules.size() - 1; i >= 0; i--) {		
-		if (!modules[i]->Backward(delta)) return false;
+		InferenceModule* module = modules[i];
+		if (!module->Backward(delta)) {
+			return false;
+		}
 
 	}
 	return true;

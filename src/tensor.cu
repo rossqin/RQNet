@@ -576,8 +576,8 @@ __global__ static void one_stride_pooling_patch_kernel(void* out, void* in, int 
 			temp = temp % size;
 			h = temp / width;
 			w = temp % width; 
-				index1 = b * c_size + c * size + (h + 1) * (width + 1) + width + 1;
-		 
+			//index1 = b * c_size + c * size + (h + 1) * (width + 1) + width + 1;
+			index1 = b * c_size + c * size + h * (width + 1) + width;
 		}
 		else {
 			size = width * channels;
@@ -585,7 +585,8 @@ __global__ static void one_stride_pooling_patch_kernel(void* out, void* in, int 
 			temp = temp % size;
 			w = temp / channels;
 			c = temp % channels;
-			index1 = b * c_size +  + (h + 1) * (width + 1) * channels + (width + 1) * channels + c;
+			//index1 = b * c_size +  (h + 1) * (width + 1) * channels + (width + 1) * channels + c;
+			index1 = b * c_size + h * (width + 1) * channels + width * channels + c;
 		}
 		if (data_type == CUDNN_DATA_FLOAT) {
 			float* fout = reinterpret_cast<float*>(out);

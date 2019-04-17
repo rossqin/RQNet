@@ -69,9 +69,9 @@ bool CNNNetwork::Load(const char* filename) {
 		str = "";
 		inputElement->QueryText("data_type", str);
 		data_type = get_data_type(str);
-		int input_channels = 3;
-		int input_width = 416;
-		int input_height = 416;
+		input_channels = 3;
+		input_width = 416;
+		input_height = 416;
 		inputElement->QueryIntText("channels", input_channels);
 		inputElement->QueryIntText("width", input_width);
 		inputElement->QueryIntText("height", input_height);
@@ -149,8 +149,7 @@ bool CNNNetwork::Backward() {
 	return true;
 }
 
-bool CNNNetwork::Train() {
-
+bool CNNNetwork::Train() { 
 	if (!cuDNNInitialize()) {
 		cerr << "CUDNN initialization failed!\n";
 		return false;
@@ -174,20 +173,36 @@ bool CNNNetwork::Train() {
 	float avg_loss = -1.0;  
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
 	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
+	string path = string(DEBUGGING_DIR) + "input.bin";
+	ifstream f(path.c_str(), ios::binary);
+	f.read(reinterpret_cast<char*>(input), input_len);
+	f.close();
+	f.open(path.c_str(), ios::binary);
+	f.read(reinterpret_cast<char*>(truths), truth_len);
+	f.close();
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
 		it++;
 		clock_t start_clk = clock(); 		
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
-	
+			
+#if 0
 			//cout << "\nSubdivision " << i << ": loading data ... ";
 			long t = GetTickCount();			
 			memset(truths, 0, truth_len);
 			memset(input, 0,  input_len);
 			if (!loader.MiniBatchLoad(input, truths,input_channels,mini_batch,input_width, input_height)) return false;  
 			t = GetTickCount() - t;
+			string path = string(DEBUGGING_DIR) + "input.bin";
+			ofstream f(path.c_str(), ios::binary);
+			f.write(reinterpret_cast<char*>(input), input_len);
+			f.close();
+			path = string(DEBUGGING_DIR) + "truth.bin";
+			f.open(path.c_str(), ios::binary);
+			f.write(reinterpret_cast<char*>(truths), truth_len);
+			f.close();
 			//cout << " in " << (t * 0.001) << " secs.\n";
-			
+#endif			
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;   
 		}

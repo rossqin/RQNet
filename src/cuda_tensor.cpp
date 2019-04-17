@@ -54,7 +54,7 @@ CudaTensor::~CudaTensor() {
 }
 char* CudaTensor::BatchData(int b) const {
 	if(!gpu_data || b < 0 || b>= n) return nullptr; 
-	return reinterpret_cast<char*>(gpu_data) + Elements3D() * byte_per_element;
+	return reinterpret_cast<char*>(gpu_data) + b *(Elements3D() * byte_per_element);
 }
 bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 	
@@ -163,6 +163,57 @@ bool CudaTensor::Push(const float* cpu_data, int pos, int length) {
 	return r;
 }
 bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
+	if (0 == elements) return false;
+	int stored_b = header.dims[0], stored_c, stored_h, stored_w;
+	cudnnDataType_t stored_t = (header.data_type == CUDNN_DATA_DOUBLE) ? CUDNN_DATA_FLOAT : header.data_type;
+	if (data_format == CUDNN_TENSOR_NHWC) { 
+		stored_c = header.dims[1];
+		stored_h = header.dims[2];
+		stored_w = header.dims[3];
+	}
+	else {
+		stored_h = header.dims[1];
+		stored_w = header.dims[2];
+		stored_c = header.dims[3];
+	} 
+	int stored_elements = stored_b * stored_c * stored_h * stored_w;
+	CudaPtr<char> temp(header.bytes , cpu_data);	
+	if (stored_elements >= elements) {
+		if (data_type == stored_t) {
+			return cudaSuccess == cudaMemcpy(gpu_data, temp, bytes, cudaMemcpyDeviceToDevice);
+		}
+		else if(data_type == CUDNN_DATA_HALF) {
+			return f32_to_f16(reinterpret_cast<__half*>(gpu_data), reinterpret_cast<float*>(temp.ptr), elements);
+		}
+		else {
+			return f16_to_f32(reinterpret_cast<float*>(gpu_data), reinterpret_cast<__half*>(temp.ptr), elements);
+		}
+	}
+	else {
+		if (data_type == stored_t) {
+			if(cudaSuccess != cudaMemcpy(gpu_data, temp, header.bytes, cudaMemcpyDeviceToDevice)) return false;
+		}
+		else if (data_type == CUDNN_DATA_HALF) {
+			if(!f32_to_f16(reinterpret_cast<__half*>(gpu_data), reinterpret_cast<float*>(temp.ptr), stored_elements))
+				return false;
+		}
+		else {
+			if(!f16_to_f32(reinterpret_cast<float*>(gpu_data), reinterpret_cast<__half*>(temp.ptr), stored_elements))
+				return false;
+		}
+		int left = elements - stored_elements;
+		unique_ptr<float> ptr(New float[left]);
+		float* buffer = ptr.get();
+		for (int i = 0; i < elements; i++) {
+			buffer[i] = rand_uniform_strong(-0.5, 0.5);
+		}
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* dst = reinterpret_cast<float*>(gpu_data) + stored_elements;
+			return (cudaSuccess == cudaMemcpy(dst, buffer, left * sizeof(float), cudaMemcpyHostToDevice));
+		}
+		CudaPtr<float> gpu_buffer(left, buffer);
+		return f32_to_f16(reinterpret_cast<__half*>(gpu_data), gpu_buffer, left);
+	}
 	return true;
 }
 bool CudaTensor::Pull(float * cpu_data, int pos, int length) const {
@@ -271,4 +322,27 @@ bool CudaTensor::Randomize() {
 	CudaPtr<float> gpu_buffer(elements, buffer);
 	return f32_to_f16(reinterpret_cast<__half*>(gpu_data), gpu_buffer, elements);
 
+}
+
+bool CudaTensor::Save(const char * filename, int batch) {
+	if (bytes == 0) return false;
+	ofstream f(filename, ios::binary | ios::trunc);
+	if (!f.is_open()) return false;
+	int write_len = bytes;
+	char* gpu_buffer = reinterpret_cast<char*>(gpu_data);
+	if (batch >= 0 && batch < n) {
+		write_len = c * h * w * byte_per_element;
+		gpu_buffer += (batch * write_len);
+	}
+	char* buffer = new char[write_len];
+	unique_ptr<char> temp(buffer);
+	cudaError_t e = cudaMemcpy(buffer, gpu_buffer, write_len, cudaMemcpyDeviceToHost);
+	if (e != cudaSuccess) {
+		cerr << "Failed to save file `" << filename << "` : Error copy data from GPU.\n";
+		f.close();
+		return false;
+	}
+	f.write(buffer, write_len);
+	f.close();
+	return true;
 }

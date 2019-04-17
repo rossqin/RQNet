@@ -20,12 +20,12 @@ struct tensor_data_header {
 
 template <typename T>
 class CudaPtr {
-protected:
-	T*  ptr;
+protected:	
 	int bytes;
 	mutable cudaError_t err;
 	CudaPtr() = default;
 public:
+	T*  ptr;
 	cudaError_t GetError() const { return err; }
 	operator T*() { return ptr; }
 	bool ToCPU(void* dest, int length = -1) const {
@@ -33,7 +33,7 @@ public:
 		err = cudaMemcpy(dest, ptr, length, cudaMemcpyDeviceToHost);
 		return err == cudaSuccess;
 	}
-	CudaPtr(int length, void* src = NULL) {
+	CudaPtr(int length, const void* src = NULL) {
 		ptr = NULL;
 		bytes = length * sizeof(T);
 		err = cudaMalloc(&ptr, bytes);
@@ -98,4 +98,5 @@ public:
 	bool MulAdd(const CudaTensor& op_m, const CudaTensor& op_a);
 	bool Release();
 	bool Randomize();
+	bool Save(const char* filename, int batch = -1);
 };

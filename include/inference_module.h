@@ -123,8 +123,7 @@ public:
 };
 class ActivationModule : public InferenceModule {
 protected:
-	cudnnActivationDescriptor_t a_desc;
-	cudnnActivationMode_t  mode;
+	ActivationMode mode;
 	float factor; 
 	bool Resize(int w, int h);
 public:

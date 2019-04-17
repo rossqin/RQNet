@@ -19,6 +19,7 @@ static const char* get_file_name(const char* path) {
  
 bool network_train(const char* data_definition, const char*  network_definition, const char* weights_path) {
 	
+	if (!cuDNNInitialize()) return false;
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 	
 	if (!GetAppConfig().Load(data_definition)) {
@@ -102,6 +103,8 @@ int main(int argc, char* argv[]) {
 #ifdef _DEBUG
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 #endif	 
+
+
 	cudaError_t err = cudaGetDeviceCount(&gpu_device_cnt);
 	cout << " " << gpu_device_cnt << " GPU detected." << endl << endl;
 	if (argc < 3) {

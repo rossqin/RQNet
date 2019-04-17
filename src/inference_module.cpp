@@ -134,8 +134,8 @@ bool InferenceModule::Forward(ForwardContext & context) {
 	int w = 0;
 	int h = 0;
 
-	if (n == 1) {
-		input = *(context.input);//prevs[0]->output;
+	if (n == 1) { 
+		input = prevs[0]->output;
 		w = input.Width();
 		h = input.Height();
 	}
@@ -149,7 +149,8 @@ bool InferenceModule::Forward(ForwardContext & context) {
 				w = prevs[i]->output.Width();
 			srcs.push_back(&(prevs[i]->output));
 		} 
-		if (w != input_width || h != input_height) {
+		int expected_elements = network->mini_batch * network->input_channels * w * h;
+		if (w != input_width || h != input_height || input.Elements() != expected_elements) {
 			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
 		}
 		else {
@@ -161,15 +162,19 @@ bool InferenceModule::Forward(ForwardContext & context) {
 		//input = context.input;
 		w = network->input_width;
 		h = network->input_height;
-		if (input_width != w || input_height != h) {
+		int expected_elements = network->mini_batch * network->input_channels * w * h;
+		if (input_width != w || input_height != h || input.Elements() != expected_elements) {
 			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
 			if(!input.Push(network->input)) return false;
 		}
 	}
 	if (input_width != w || input_height != h) {
 		if (!Resize(w, h)) return false; 
-		if (!output.Init(input.Batch(), output_channels, output_height, output_width)) return false;		
+			
 	}
+	int expected_output_elemens = network->mini_batch * output_channels * output_height * output_width;
+	if (output.Elements() != expected_output_elemens &&
+		!output.Init(network->mini_batch, output_channels, output_height, output_width)) return false;
 	context.input = &output;
 	return true;
 }
@@ -251,39 +256,27 @@ bool ActivationModule::Resize(int w, int h) {
 	output_width = input_width; 
 	output_height = input_height; 
 	
-	return CUDNN_STATUS_SUCCESS == cudnnSetActivationDescriptor(a_desc, mode, CUDNN_NOT_PROPAGATE_NAN, 0.0);
+	return true;
 }
 
 ActivationModule::ActivationModule(const XMLElement* element, Layer* l,CNNNetwork* net, InferenceModule* prev):
 InferenceModule(element, l, net, prev){
 
-	a_desc = NULL;
-	mode = CUDNN_ACTIVATION_RELU;
-	
+  
 	factor = 0.1f;
 	const char* a = element->Attribute("method");
 	string str(a ? a : net->DefaultActivation().c_str());
-	if (str == "leaky" || str == "relu") {
-		mode = CUDNN_ACTIVATION_RELU;
-		cudnnCreateActivationDescriptor(&a_desc);
-	}
-	else if (str == "tanh") {
-		mode = CUDNN_ACTIVATION_TANH;
-		cudnnCreateActivationDescriptor(&a_desc);
-	}
-	else if (str == "elu") {
-		mode = CUDNN_ACTIVATION_ELU;
-		cudnnCreateActivationDescriptor(&a_desc);
-	}
-	else if (str == "sigmoid" || str == "logistic") {
-		mode = CUDNN_ACTIVATION_SIGMOID;
-		cudnnCreateActivationDescriptor(&a_desc);
-	}
-	else if(str != "linear") {
-		cerr << " Warning: Unsupported activation type `" << str << "` has been ignored!\n";
-	}
 
-
+	if (str == "leaky") mode = LEAKY;
+	else if (str == "linear") mode = LINEAR;
+	else if (str == "logistic") mode = LOGISTIC;
+	else if (str == "relu") mode = RELU;
+	else if (str == "lhtan") mode = LHTAN;
+	else if (str == "hardtan") mode = HARDTAN;
+	else if (str == "tanh") mode = TANH;
+	else if (str == "loggy") mode = LOGGY;
+	else if (str == "elu") mode = ELU; 
+	else   mode = LEAKY;  
 	GetPrevModules(element);
 	output_width = input_width;
 	output_height = input_height;
@@ -291,24 +284,15 @@ InferenceModule(element, l, net, prev){
 }
 
 ActivationModule::~ActivationModule() {
-	if(a_desc) cudnnDestroyActivationDescriptor(a_desc);
 }
 
 bool ActivationModule::Forward(ForwardContext & context) {
-	if (!InferenceModule::Forward(context)) return false;
-	if (!a_desc) return true;
-	return CUDNN_STATUS_SUCCESS == cudnnActivationForward(GetCUDNNHandle(), a_desc, &one, 
-		input.Descriptor(), input, &zero, output.Descriptor(), output);
+	if (!InferenceModule::Forward(context)) return false; 
+	return activate_array_ongpu(input, output, input.Elements(), input.DataType(), mode);
 }
-bool ActivationModule::Backward(CudaTensor & delta) {
-	
+bool ActivationModule::Backward(CudaTensor & delta) {	
 	if (!InferenceModule::Backward(delta)) return false; 
-	if (a_desc) { 
-		if (CUDNN_STATUS_SUCCESS !=
-			cudnnActivationBackward(GetCUDNNHandle(), a_desc, &one, output.Descriptor(), output, 
-				delta.Descriptor(), delta, input.Descriptor(),input,&zero,delta.Descriptor(),delta))
-			return false;
-	}
+	if (!activate_array_ongpu(output, delta, output.Elements(), output.DataType(), mode)) return false;
 	return DistributeDeltas(delta);
 }
 bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {

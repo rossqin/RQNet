@@ -124,6 +124,7 @@
     <ClInclude Include="include\yolo.h" />
   </ItemGroup>
   <ItemGroup>
+    <CudaCompile Include="src\activation.cu" />
     <CudaCompile Include="src\image.cu" />
     <CudaCompile Include="src\tensor.cu" />
   </ItemGroup>

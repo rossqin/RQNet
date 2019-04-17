@@ -34,23 +34,13 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, Inf
 	if (classes < 0) { // exceptional situation
 		features = 6;
 		classes = 1;
-	}
-	pos_desc = nullptr;
-	conf_desc = nullptr;
-	a_desc = nullptr;
-	cudnnCreateActivationDescriptor(&a_desc);
-	cudnnCreateTensorDescriptor(&conf_desc);
-	cudnnCreateTensorDescriptor(&pos_desc);
-	cudnnSetActivationDescriptor(a_desc, CUDNN_ACTIVATION_SIGMOID, CUDNN_NOT_PROPAGATE_NAN, 0.0);
+	} 
 	output.DataType(CUDNN_DATA_FLOAT);
 	Resize(input_width, input_width);
 	output_channels = input_channels;
 
 }
-YoloModule::~YoloModule() {
-	if (a_desc) cudnnDestroyActivationDescriptor(a_desc);
-	if (pos_desc) cudnnDestroyTensorDescriptor(pos_desc);
-	if (conf_desc) cudnnDestroyTensorDescriptor(conf_desc);
+YoloModule::~YoloModule() { 
 }
 enum {
 	INDEX_PROBILITY_X = 0,
@@ -150,9 +140,7 @@ bool YoloModule::Resize(int w, int h) {
 	input_height = h;
 	input_width = w;
 	output_width = input_width;
-	output_height = input_height;
-	cudnnSetTensor4dDescriptor(pos_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, 2, output_height, output_width);
-	cudnnSetTensor4dDescriptor(conf_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, (1 + classes), output_height, output_width);
+	output_height = input_height; 
 	return true;
 }
 void YoloModule::DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat) {
@@ -206,7 +194,9 @@ bool YoloModule::Forward(ForwardContext& context) {
 		output = input;
 	}
 	else {
-		f16_to_f32(reinterpret_cast<float *>(output.Data()), reinterpret_cast<__half*>(input.Data()), input.Elements());
+		float *out = reinterpret_cast<float *>(output.Data());
+		half *in = reinterpret_cast<__half*>(input.Data());
+		if(!f16_to_f32( out, in, input.Elements())) return false;
 	}
 
 	float* output_gpu = reinterpret_cast<float*>(output.Data());
@@ -216,13 +206,12 @@ bool YoloModule::Forward(ForwardContext& context) {
 	for (b = 0; b < output.Batch(); b++) {
 		for (n = 0; n < masked_anchors.size(); n++) {
 			float* x = output_gpu + EntryIndex(n, 0, INDEX_PROBILITY_X);
-			if(CUDNN_STATUS_SUCCESS != cudnnActivationForward(handle, a_desc, &one, pos_desc, x, &zero, pos_desc, x)) {			
+			if (!activate_array_ongpu(x,x, 2 * output.Elements2D(), output.DataType(), LOGISTIC)) {
 				return false;
-			}
+			} 
 			x = output_gpu + EntryIndex( n, 0, INDEX_CONFIDENCE);
-			if (CUDNN_STATUS_SUCCESS != cudnnActivationForward(handle, a_desc, &one, conf_desc, x, &zero, conf_desc, x)) {
-				return false;
-			}
+			if (!activate_array_ongpu(x, x, (1 + classes) * output.Elements2D(), output.DataType(), LOGISTIC))
+				return false; 
 		}
 		output_gpu += output.Elements3D();
 	} 
@@ -319,7 +308,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 		loss += square_sum_array(delta_cpu, output.Elements3D());
 
 	}
-	GetNetwork().RegisterLoss(loss);
+	network->RegisterLoss(loss);
 
 	loss /= network->MiniBatch();
 	 
@@ -345,10 +334,9 @@ bool YoloModule::Forward(ForwardContext& context) {
 
 
 		}
-		cout << oss.str();
 	}
-	
-	cout <<  endl << endl;
+
+	cout << oss.str() << endl << endl; 
 
 	return true;
 }

@@ -43,6 +43,7 @@ BatchNormModule::BatchNormModule(const XMLElement * element, Layer * l, CNNNetwo
 	training_params.Init(4, output_channels, 1, 1);
 	GetParamPool().Put(name, &params); 
 	
+	Resize(input_width, input_height);
 	freezed = false;
 	fused = false;
 }
@@ -57,19 +58,27 @@ bool BatchNormModule::Resize(int w, int h) {
 	input_height = h;
 	output_width = input_width;
 	output_height = input_height;
-	return (CUDNN_STATUS_SUCCESS == cudnnDeriveBNTensorDescriptor(t_desc, input.Descriptor(), CUDNN_BATCHNORM_SPATIAL));
-
+	cudnnTensorDescriptor_t x_desc = input.Descriptor();
+	bool created = false;
+	if (!x_desc) {
+		cudnnCreateTensorDescriptor(&x_desc);
+		cudnnSetTensor4dDescriptor(x_desc, input.DataFormat(), input.DataType(), network->MiniBatch(),
+			input_channels, input_height, input_width);
+		created = true;
+	}
+	bool r = (CUDNN_STATUS_SUCCESS == cudnnDeriveBNTensorDescriptor(t_desc,x_desc , CUDNN_BATCHNORM_SPATIAL));
+	if (created) cudnnDestroyTensorDescriptor(x_desc);
+	return r;
 }
 
 bool BatchNormModule::Forward(ForwardContext & context) {
 	if (fused) return true;
 	float one = 1.0f, zero = 0.0f;
 	if (!InferenceModule::Forward(context)) return false;
-
 	void* beta = params.BatchData(0);
 	void* gamma = params.BatchData(1);
 	void* running_mu = params.BatchData(2);
-	void* running_var = params.BatchData(3);
+	void* running_var = params.BatchData(3); 
 
 	void* mu = training_params.BatchData(2);
 	void* var = training_params.BatchData(3);
