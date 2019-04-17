@@ -31,7 +31,7 @@ bool Layer::Forward(ForwardContext & context) {
 			return false;
 		}
 		//char filename[MAX_PATH];
-		//sprintf(filename, "%s%s.output.bin", DEBUGGING_DIR, module->name.c_str());
+		//sprintf(filename, "%s0.2.0\\%s.output.bin", DEBUGGING_DIR, module->name.c_str());
 		//module->output.Save(filename,1);
 		//n = i; 
 	}
@@ -44,7 +44,9 @@ bool Layer::Backward(CudaTensor & delta) {
 		if (!module->Backward(delta)) {
 			return false;
 		}
-
+		//char filename[MAX_PATH];
+		//sprintf(filename, "%s0.2.0\\%s.delta.bin", DEBUGGING_DIR, module->name.c_str());
+		//delta.Save(filename,1);
 	}
 	return true;
 }

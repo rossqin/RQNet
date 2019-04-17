@@ -117,7 +117,7 @@ void InferenceModule::WritePorts(ofstream& xml) const {
 bool InferenceModule::PrepareShortcutDelta() {
 	if (shortcut_delta.SameShape(output))
 		return true;
-	return shortcut_delta.Init(input.Batch(), input.Channel(), input.Height(), input.Width());
+	return shortcut_delta.Init(output.Batch(), output_channels, output_height, output_width);
 }
 bool InferenceModule::UpdateShortcutDelta(const CudaTensor& delta) {
 	if (shortcut_delta.Elements() == 0) {
@@ -180,12 +180,12 @@ bool InferenceModule::Forward(ForwardContext & context) {
 }
  
 bool InferenceModule::Backward(CudaTensor & delta) {
-	if (delta.Elements() == 0 && shortcut_delta.Elements() != 0) {
-		delta = shortcut_delta;
-		return shortcut_delta.Release();
-	}
-	if (delta.SameShape(shortcut_delta)) {
-		if(!delta.Add(shortcut_delta)) return false;
+	if (shortcut_delta.Elements() != 0) {
+		if (delta.SameShape(shortcut_delta)) {
+			if (!delta.Add(shortcut_delta)) return false;
+		}
+		else 
+			delta = shortcut_delta;
 		return shortcut_delta.Release();
 	}
 	return true;
@@ -208,7 +208,7 @@ bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	} 
 	if (!delta.Split(prev_deltas))
 		return false;
-	return delta.Release(); 
+	return true;//delta.Release(); 
 }
 
 bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, bool fp16) const {
@@ -291,8 +291,10 @@ bool ActivationModule::Forward(ForwardContext & context) {
 	return activate_array_ongpu(input, output, input.Elements(), input.DataType(), mode);
 }
 bool ActivationModule::Backward(CudaTensor & delta) {	
-	if (!InferenceModule::Backward(delta)) return false; 
-	if (!activate_array_ongpu(output, delta, output.Elements(), output.DataType(), mode)) return false;
+	if (!InferenceModule::Backward(delta)) return false;
+	//delta.Save(DEBUGGING_DIR "activation.before02.bin", 1);
+	if (!gradient_array_ongpu(output, delta, output.Elements(), output.DataType(), mode)) return false;
+	//delta.Save(DEBUGGING_DIR "activation.after02.bin", 1);
 	return DistributeDeltas(delta);
 }
 bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {

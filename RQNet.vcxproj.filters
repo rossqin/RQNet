@@ -106,5 +106,8 @@
     <CudaCompile Include="src\activation.cu">
       <Filter>src</Filter>
     </CudaCompile>
+    <CudaCompile Include="src\pooling.cu">
+      <Filter>src</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

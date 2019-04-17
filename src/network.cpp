@@ -173,25 +173,28 @@ bool CNNNetwork::Train() {
 	float avg_loss = -1.0;  
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
 	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
-	string path = string(DEBUGGING_DIR) + "input.bin";
-	ifstream f(path.c_str(), ios::binary);
+#if 0
+ 
+	ifstream f(DEBUGGING_DIR "old.input.bin", ios::binary);
 	f.read(reinterpret_cast<char*>(input), input_len);
 	f.close();
-	f.open(path.c_str(), ios::binary);
+	f.open(DEBUGGING_DIR "old.truths.bin", ios::binary);
 	f.read(reinterpret_cast<char*>(truths), truth_len);
 	f.close();
+#endif
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
 		it++;
 		clock_t start_clk = clock(); 		
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
 			
-#if 0
+
 			//cout << "\nSubdivision " << i << ": loading data ... ";
 			long t = GetTickCount();			
 			memset(truths, 0, truth_len);
 			memset(input, 0,  input_len);
 			if (!loader.MiniBatchLoad(input, truths,input_channels,mini_batch,input_width, input_height)) return false;  
+#if 0
 			t = GetTickCount() - t;
 			string path = string(DEBUGGING_DIR) + "input.bin";
 			ofstream f(path.c_str(), ios::binary);
@@ -224,7 +227,6 @@ bool CNNNetwork::Train() {
 			ofs.close();
 		}
 		
-		lr /= GetAppConfig().GetBatch();
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
 		} 

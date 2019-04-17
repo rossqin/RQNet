@@ -15,10 +15,12 @@ CudaTensor::CudaTensor(const CudaTensor & right) {
 	elements = right.elements;
 	bytes = right.bytes;
 	desc = nullptr;
+	bad_flag = true;
 	cudnnCreateTensorDescriptor(&desc);
+	if(CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(desc, data_format, data_type, n, c, h, w))
+		return ;
 	cudaMalloc(&gpu_data, bytes);
-	cudaMemcpy(gpu_data, right.gpu_data, bytes, cudaMemcpyDeviceToDevice);
-	bad_flag = false;
+	bad_flag = (cudaSuccess != cudaMemcpy(gpu_data, right.gpu_data, bytes, cudaMemcpyDeviceToDevice)); 
 }
 
 CudaTensor::CudaTensor(cudnnDataType_t t, cudnnTensorFormat_t f) {

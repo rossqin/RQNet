@@ -126,6 +126,7 @@
   <ItemGroup>
     <CudaCompile Include="src\activation.cu" />
     <CudaCompile Include="src\image.cu" />
+    <CudaCompile Include="src\pooling.cu" />
     <CudaCompile Include="src\tensor.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

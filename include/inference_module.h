@@ -86,11 +86,11 @@ protected:
 	int stride_h;
 	int window_w;
 	int window_h;
-	int pad_w;
-	int pad_h;
-	//int* indexes;
-	CudaTensor stride_one_output;
-	cudnnPoolingDescriptor_t desc;
+	int pad_wl;
+	int pad_wr;
+	int pad_ht;
+	int pad_hb;
+	int* indexes;
 	cudnnPoolingMode_t mode;
 	bool Resize(int w, int h);
 public :

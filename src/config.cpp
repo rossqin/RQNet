@@ -168,6 +168,7 @@ bool AppConfig::Load(const char * filename, bool training) {
 		while (ds) {
 			if (ds->Attribute("name", dataset_name)) {
 				dataset = New Dataset(ds);
+				dataset->ShuffleFiles();
 				break;
 			}
 			ds = ds->NextSiblingElement();

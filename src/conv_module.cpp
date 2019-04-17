@@ -133,7 +133,7 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 	if (!delta.Init(input.Batch(), input_channels, input_height, input_width)) return false;
 	status = cudnnConvolutionBackwardData(handle, &one, w_desc, w,
 		temp.Descriptor(), temp, conv_desc, bwdd_algo, network->workspace,
-		network->workspace_size, &zero, delta.Descriptor(), delta);
+		network->workspace_size, &zero, delta.Descriptor(), delta); 
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: backward data failed in`" << name << "`. Error code :" << (int)status << endl;
 		return false;
@@ -154,7 +154,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 	float decay = (0.0f - cfg.Decay()) *  cfg.GetBatch();
 	lr /= cfg.GetBatch();
 	if (cfg.UpdateStrategy() == "SGD") {
-		if (bias.Channel() != output_channels) {
+		if (bias.Channel() == output_channels) {
 			if(!sgd_update(bias, dbias, output_channels, bias.DataType(), lr , decay, m)) return false;
 
 		}
@@ -169,7 +169,7 @@ bool ConvolutionalModule::Resize(int w, int h) {
 	int b = network->MiniBatch();
 
 	cudnnTensorDescriptor_t x_desc = input.Descriptor();
-	cudnnTensorDescriptor_t y_desc = input.Descriptor();
+	cudnnTensorDescriptor_t y_desc = output.Descriptor();
 	bool created = false;
 	if (!x_desc) {
 		cudnnCreateTensorDescriptor(&x_desc);

@@ -4,7 +4,7 @@
 #include "data_loader.h"
 #include <thread>
 #include <memory>
-
+//#define _USE_MULTI_THREAD_ 1
 int post_load_rot[16] = { 3,4,1,5,0,1,0,1,3,1,4,0,3,4,4,1 };
 int rot_index = 0;
 int mini_batch_rotate = 0;
@@ -325,15 +325,23 @@ bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channe
 	int image_size = channels * width * height;
 
 	const char* filename;
+#ifdef _USE_MULTI_THREAD_
 	vector<thread*> threads; 
 	vector<ImageLabelParseInfo*> thread_params;
+#else 
+	ImageLabelParseInfo g_info;
+#endif
 	for (int i = 0, index = start_index; i < mini_batch; i++, index++) { 
 		if (index >= ds->GetSize()) {
 			filename =  ds->FilenameAt(random_gen() % ds->GetSize()).c_str();
 		}
 		else
 			filename =  ds->FilenameAt(index).c_str();
+#ifdef _USE_MULTI_THREAD_
 		ImageLabelParseInfo* info = New ImageLabelParseInfo();
+#else
+		ImageLabelParseInfo* info = &g_info;
+#endif
 		info->max_boxes = GetAppConfig().GetMaxTruths();
 		info->small_object = GetAppConfig().SmallObjEnabled();
 		info->classes = (int)ds->GetClasses();
@@ -346,19 +354,28 @@ bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channe
 		info->image_size = image_size;
 		info->failed = true;
 		info->thread_index = i;
+#ifdef _USE_MULTI_THREAD_
 		threads.push_back(New thread(load_image_in_thread, info));
 		thread_params.push_back(info);
+#else
+		load_image_in_thread(info);
+		if (info->failed) {
+			return false;
+		}
+#endif
 		truth_data += GetAppConfig().GetMaxTruths();
 		input += image_size;
 		
 	}	
 	bool succ = true;
+#ifdef _USE_MULTI_THREAD_
 	for(size_t i = 0; i < threads.size(); i++) {
 		threads[i]->join();
 		delete threads[i];
 		if (thread_params[i]->failed)  succ = false;
 		delete thread_params[i];
 	}
+#endif
 	start_index += mini_batch;
 	if (start_index >= ds->GetSize()) {
 		start_index = 0;
