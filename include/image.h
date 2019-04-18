@@ -16,6 +16,7 @@ public:
 	Image();
 	Image(const char* filename);
 	Image(int w, int h, int c, float val= 0.0);
+	Image(int w, int h, int c, float* data_cpu);
 	Image(const Image& img);
 
 	const Image& operator=(const Image& img);

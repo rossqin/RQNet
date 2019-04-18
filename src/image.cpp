@@ -36,10 +36,24 @@ Image::Image(int w, int h, int c, float val) {
 		}
 	}
 	else
-		data = NULL;
-	gpu_data = NULL;
+		data = nullptr;
+	gpu_data = nullptr;
 }
-
+Image::Image(int w, int h, int c, float* data_cpu) {
+	normalized = true;
+	if (w > 0 && h > 0 && c > 0) {
+		width = w;
+		height = h;
+		channels = c;
+		int e = w * h * c;
+		data = New float[e];
+		if (data_cpu)
+			memcpy(data, data_cpu, e * sizeof(float));
+		else {
+			memset(data, 0, e * sizeof(float));
+		}
+	}
+}
 bool Image::PushToGPU() {
 	int e = width * height * channels; 
 	if (gpu_data) return true;

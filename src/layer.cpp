@@ -22,18 +22,19 @@ Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*&
 	}
 	last_module = prev_module;
 }
+bool dbg_switch = false;
 bool Layer::Forward(ForwardContext & context) {
-	//int n = -1;
 	for(size_t i = 0 ; i < modules.size(); i++){
 		InferenceModule* module = modules[i];
 		if (!module->Forward(context)) {
 			cerr << "Forward failed at " << modules[i]->name << endl;
 			return false;
 		}
-		//char filename[MAX_PATH];
-		//sprintf(filename, "%s0.2.0\\%s.output.bin", DEBUGGING_DIR, module->name.c_str());
-		//module->output.Save(filename,1);
-		//n = i; 
+		if (dbg_switch) {
+			char filename[MAX_PATH];
+			sprintf(filename, "%s0.2.0\\%s.output.bin", DEBUGGING_DIR, module->name.c_str());
+			module->output.Save(filename, 1);
+		}
 	}
 	return true;
 }

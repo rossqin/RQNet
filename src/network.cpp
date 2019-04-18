@@ -3,7 +3,7 @@
 #include "config.h"
 #include "data_loader.h"
 #include "param_pool.h"
-
+#include "image.h"
 static CNNNetwork network;
 CNNNetwork& GetNetwork() {
 	return network;
@@ -175,10 +175,10 @@ bool CNNNetwork::Train() {
 	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
 #if 0
  
-	ifstream f(DEBUGGING_DIR "old.input.bin", ios::binary);
+	ifstream f(DEBUGGING_DIR "input01.bin", ios::binary);
 	f.read(reinterpret_cast<char*>(input), input_len);
 	f.close();
-	f.open(DEBUGGING_DIR "old.truths.bin", ios::binary);
+	f.open(DEBUGGING_DIR "truth01.bin", ios::binary);
 	f.read(reinterpret_cast<char*>(truths), truth_len);
 	f.close();
 #endif
@@ -190,21 +190,26 @@ bool CNNNetwork::Train() {
 			
 
 			//cout << "\nSubdivision " << i << ": loading data ... ";
-			long t = GetTickCount();			
+			long t = GetTickCount();
+
 			memset(truths, 0, truth_len);
 			memset(input, 0,  input_len);
-			if (!loader.MiniBatchLoad(input, truths,input_channels,mini_batch,input_width, input_height)) return false;  
+			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height)) {
+				return false;
+			} 
+		
 #if 0
 			t = GetTickCount() - t;
-			string path = string(DEBUGGING_DIR) + "input.bin";
-			ofstream f(path.c_str(), ios::binary);
+
+			char dbg_filename[MAX_PATH];
+			sprintf(dbg_filename, DEBUGGING_DIR "input%02d.bin", i); 
+			ofstream f(dbg_filename, ios::binary);
 			f.write(reinterpret_cast<char*>(input), input_len);
 			f.close();
-			path = string(DEBUGGING_DIR) + "truth.bin";
-			f.open(path.c_str(), ios::binary);
+			sprintf(dbg_filename, DEBUGGING_DIR "truth%02d.bin", i); 
+			f.open(dbg_filename, ios::binary);
 			f.write(reinterpret_cast<char*>(truths), truth_len);
-			f.close();
-			//cout << " in " << (t * 0.001) << " secs.\n";
+			f.close(); 
 #endif			
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;   

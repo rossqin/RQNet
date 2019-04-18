@@ -4,7 +4,7 @@
 #include "data_loader.h"
 #include <thread>
 #include <memory>
-//#define _USE_MULTI_THREAD_ 1
+#define _USE_MULTI_THREAD_ 1
 int post_load_rot[16] = { 3,4,1,5,0,1,0,1,3,1,4,0,3,4,4,1 };
 int rot_index = 0;
 int mini_batch_rotate = 0;

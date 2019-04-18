@@ -164,9 +164,9 @@ bool InferenceModule::Forward(ForwardContext & context) {
 		h = network->input_height;
 		int expected_elements = network->mini_batch * network->input_channels * w * h;
 		if (input_width != w || input_height != h || input.Elements() != expected_elements) {
-			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
-			if(!input.Push(network->input)) return false;
+			if (!input.Init(network->mini_batch, input_channels, w, h)) return false; 
 		}
+		if (!input.Push(network->input)) return false;
 	}
 	if (input_width != w || input_height != h) {
 		if (!Resize(w, h)) return false; 
@@ -192,7 +192,7 @@ bool InferenceModule::Backward(CudaTensor & delta) {
 }
 bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	int n = prevs.size();
-	if (n == 0) return true;
+	if (n == 0) return true; 
 	if (n < 2) {
 		InferenceModule* module = prevs[0];
 		if (module != logical_prev) {			 
