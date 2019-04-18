@@ -26,7 +26,7 @@ InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork
 	logical_prev = prev;
 	string base = layer->GetName() + ".";
 	const char* id = element->Attribute("id");
-	if (NULL == id) id = "convolution";
+	if (nullptr == id) id = "convolution";
 	name = base + id;
 	cout << " INFO: Initializing " << name << " ...\n";
 }
@@ -70,7 +70,7 @@ void InferenceModule::GetPrevModules(const XMLElement* element) {
 InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev) {
 	const char *t = element->Attribute("type");
 	string mtype(t ? t : "");
-	InferenceModule* module = NULL;
+	InferenceModule* module = nullptr;
 	if (mtype == "conv" || mtype == "convolutional") {
 		module = New ConvolutionalModule(element, layer, network, prev);
 	}
@@ -135,7 +135,15 @@ bool InferenceModule::Forward(ForwardContext & context) {
 	int h = 0;
 
 	if (n == 1) { 
-		input = prevs[0]->output;
+		InferenceModule* module = prevs[0];
+		if (!context.training) {
+			//check if fused
+			BatchNormModule* bnModule = dynamic_cast<BatchNormModule*>(module);
+			if (bnModule && bnModule->IsFused()) {
+				module = module->prevs[0];
+			}
+		}
+		input = module->output;
 		w = input.Width();
 		h = input.Height();
 	}

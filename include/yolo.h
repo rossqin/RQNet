@@ -30,9 +30,10 @@ protected:
 	vector<AnchorBoxItem> masked_anchors; 
 	int EntryIndex(int anchor, int loc, int entry);
 	void DeltaBackground(float* data, float* delta, ObjectInfo* truths, int max_boxes, float& avg_anyobj);
-	void DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat = NULL);
+	void DeltaClass(float* data, float* delta, int class_id, int index, float* avg_cat = nullptr);
 	void DeltaBox(float* data, float* delta, const ObjectInfo& truth, const AnchorBoxItem& anchor, int index, int x, int y);
 	bool Resize(int w, int h);
+	bool Detection();
 public:
 	YoloModule(const XMLElement* element, Layer* l, CNNNetwork* network, InferenceModule* prev);
 	~YoloModule();

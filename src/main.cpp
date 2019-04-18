@@ -19,7 +19,7 @@ static const char* get_file_name(const char* path) {
  
 bool network_train(const char* data_definition, const char*  network_definition, const char* weights_path) {
 	
-	if (!cuDNNInitialize()) return false;
+	
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 	
 	if (!GetAppConfig().Load(data_definition)) {
@@ -41,7 +41,7 @@ bool network_train(const char* data_definition, const char*  network_definition,
 		return false;
 	}
 	cout << " Done !\n";
-	
+	if (!cuDNNInitialize()) return false;
 	if (!GetNetwork().Train()) {
 		cerr << "Train failed!\n";
 		cuDNNFinalize();
@@ -54,8 +54,43 @@ bool network_train(const char* data_definition, const char*  network_definition,
 bool network_test(const char* data_definition, const char*  network_definition, const char* weights_path) {
 	return false;
 }
-bool detect_image(const char*  network_definition, const char* weights_path, const char* image_file) {
-	return false;
+bool detect_image(const char* data_definition, const char*  network_definition, const char* weights_path, const char* image_file, const char* data_type) {
+	cout << "\n Loading application configuration `" << data_definition << "` ... ";
+
+	if (!GetAppConfig().Load(data_definition,2)) {
+		cerr << "Load configuration file `" << data_definition << "` failed!\n";
+		return false;
+	}
+	cout << " Done!\n Loading network configuration `" << network_definition << "` ... "; 
+	cudnnDataType_t t = CUDNN_DATA_DOUBLE;
+	if (data_type && *data_type) {
+		string s(data_type);
+		if (s == "FP32")
+			t = CUDNN_DATA_FLOAT;
+		else if (s == "FP16")
+			t = CUDNN_DATA_HALF;
+		else {
+			cerr << " Warning: unrecognized data type `" << data_type << "`!\n";
+		}		
+	} 
+	if (!GetNetwork().Load(network_definition,t)) {
+		cout << " Failed! \n";
+		cerr << "Load network file `" << network_definition << "` failed!\n";
+		return false;
+	} 
+	cout << " Done !\n Loading parameters from `" << weights_path << "... ";
+
+	if (!GetParamPool().Load(weights_path)) {
+		cout << " Failed! \n";
+		cerr << "Load network file `" << weights_path << "` failed!\n";
+
+		return false;
+	}
+	cout << " Done !\n";
+	if (!cuDNNInitialize()) return false;
+	bool ret = GetNetwork().Detect(image_file);
+	cuDNNFinalize();
+	return ret;
 }
 bool detect_video(const char*  network_definition, const char* weights_path, const char* video_file) {
 	return false;
@@ -74,13 +109,13 @@ struct ArgDef {
 	const char* hint;
 };
 ArgDef defs[] = {
-	{ "-d", "", data_def_message },
+	{ "-d", "config.xml", data_def_message },
 	{ "-n", "", network_def_message },
 	{ "-w", "", weights_message },
 	{ "-i", "", input_message },
 	{ "-o", "", output_message },
 	{ "-c","", darknet_message },
-	{ "-t","", ""}
+	{ "-t","", "data type: FP32 or FP16"}
 }; 
 
 static void parse_cmd_line(int argc, char* argv[]) {
@@ -151,7 +186,7 @@ int main(int argc, char* argv[]) {
 		ret = network_test(FLAGS_d, FLAGS_n, FLAGS_w);
 	}
 	else if (strcmp(command, "detect") == 0) {
-		ret = detect_image(FLAGS_n, FLAGS_w, FLAGS_i);
+		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t);
 	}
 	else if (strcmp(command, "demo") == 0) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);

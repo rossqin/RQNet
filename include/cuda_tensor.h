@@ -17,7 +17,27 @@ struct tensor_data_header {
 	uint32_t bytes;
 };
 #pragma pack(pop)
-
+template <typename T>
+class CpuPtr {
+protected:
+	int len;
+	int bytes;
+	mutable cudaError_t err;
+public:
+	T*  ptr;
+	cudaError_t GetError() const { return err; }
+	operator T*() const { return ptr; }
+	T operator [](int i) const { return ptr[i]; }
+	CpuPtr(int length, const void* src = nullptr) {
+		len = length;
+		ptr = New T[length];
+		err = cudaSuccess;
+		bytes = length * sizeof(T); 
+		if (src) err = cudaMemcpy(ptr, src, bytes, cudaMemcpyDeviceToHost);
+		 
+	}
+	~CpuPtr() { if (ptr) delete []ptr; }
+};
 template <typename T>
 class CudaPtr {
 protected:	
@@ -27,14 +47,14 @@ protected:
 public:
 	T*  ptr;
 	cudaError_t GetError() const { return err; }
-	operator T*() { return ptr; }
+	operator T*() const { return ptr; }
 	bool ToCPU(void* dest, int length = -1) const {
 		if (length <= 0) length = bytes;
 		err = cudaMemcpy(dest, ptr, length, cudaMemcpyDeviceToHost);
 		return err == cudaSuccess;
 	}
-	CudaPtr(int length, const void* src = NULL) {
-		ptr = NULL;
+	CudaPtr(int length, const void* src = nullptr) {
+		ptr = nullptr;
 		bytes = length * sizeof(T);
 		err = cudaMalloc(&ptr, bytes);
 		if (ptr && src) {

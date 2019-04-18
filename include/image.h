@@ -1,8 +1,7 @@
 #pragma once
- 
+
 #define ROTATE_TYPE_COUNT 6
 enum RotateType { NotRotate, ToLeft, ToRight, HorizFlip, VertiFlip, Rotate180 };
-class FloatTensor4D;
 class Image {
 protected:
 	bool normalized;
@@ -14,7 +13,8 @@ protected:
 	
 public: 
 	Image();
-	Image(const char* filename);
+	Image(const char *filename);
+	Image(const uint8_t* mat_data, int w, int h, int c, bool norm = true);
 	Image(int w, int h, int c, float val= 0.0);
 	Image(int w, int h, int c, float* data_cpu);
 	Image(const Image& img);
@@ -32,11 +32,12 @@ public:
 
 	void Whiten();
 	virtual ~Image()  ;
+	inline bool Empty() const { return 0 == height || 0 == width || 0 == channels; }
 	inline int GetHeight() const { return height; }
 	inline int GetWidth() const { return width; }
 	inline int GetChannels() const { return channels; }
-	inline const float* GetData() const { return data; }
-	inline const float* GetGPUData() const { return gpu_data; }
+	inline float* GetData() const { return data; }
+	inline float* GetGPUData() const { return gpu_data; }
 	bool Gray(bool rgb = true); 
 	bool PushToGPU();
 	bool PullFromGPU();

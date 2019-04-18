@@ -31,9 +31,6 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 		bias = dbias;
 		GetParamPool().Put(name + ".bias", &bias);
 	}
-	if (name == "layer21.convolution") {
-		cout << "checkpoint\n";
-	}
 
 	w.Init(output_channels, input_channels, width, height);
 	dw.Init(output_channels, input_channels, width, height);
@@ -95,8 +92,13 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 }
 
 bool ConvolutionalModule::Forward(ForwardContext & context) {
+	if (name == "layer03.convolution") {
+		cout << "checkpoint\n";
+	}
 	if (!InferenceModule::Forward(context)) return false;
 	float one = 1.0f, zero = 0.0f;
+	
+
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
 		input.Descriptor(), input , w_desc, w, conv_desc, fwd_algo,
 		network->workspace, network->workspace_size, &zero, output.Descriptor(), output);

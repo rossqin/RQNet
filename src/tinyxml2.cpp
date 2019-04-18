@@ -927,9 +927,9 @@ XMLNode* XMLNode::InsertAfterChild( XMLNode* afterThis, XMLNode* addThis )
 }
 
 static bool find_top_name(const char*& str, char* out, char ch) {
-	if (NULL == str || 0 == *str) return false;
+	if (nullptr == str || 0 == *str) return false;
 	const char* e = strchr(str, ch);
-	if (NULL == e) {
+	if (nullptr == e) {
 		strcpy(out, str);
 		str = "";
 		return true;

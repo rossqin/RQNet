@@ -199,7 +199,7 @@ __global__ static void im_resize_kernel_nearest(const float* orig, int orig_widt
 
 bool Image::ResizeTo(int w, int h, bool fast, float center_ratio) {
  
-	if (0 == channels || 0 == height || 0 == width ) return false;
+	if(Empty()) return false;
 	if (w <= 0 || h <= 0) return false;
 
 	if (!PushToGPU()) return false;
@@ -211,7 +211,7 @@ bool Image::ResizeTo(int w, int h, bool fast, float center_ratio) {
 	int b = GPUBlockSize(w);
 
 
-	float* gpu  = NULL;
+	float* gpu  = nullptr;
 	int e = w * h * channels;
 	
 	cudaMalloc(&gpu,e * sizeof(float));
@@ -235,7 +235,7 @@ bool Image::ResizeTo(int w, int h, bool fast, float center_ratio) {
 
 	cudaFree(gpu_data);
 	if (err != cudaSuccess) {
-		gpu_data = NULL;
+		gpu_data = nullptr;
 		return false;
 	}
 	gpu_data = gpu;
@@ -508,7 +508,7 @@ bool Image::Rotate(RotateType rt) {
 	int g = GPUGridSize(height);
 	int b = GPUBlockSize(width);
 
-	float* transition = NULL;  
+	float* transition = nullptr;  
 	int e = height * width * channels;
 	cudaError_t err;
 	if (ToLeft == rt || ToRight == rt) {

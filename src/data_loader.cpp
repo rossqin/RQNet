@@ -293,7 +293,7 @@ static void load_image_in_thread(ImageLabelParseInfo* info) {
 		char fname[MAX_PATH];
 		char ext[MAX_PATH];
 		const char* t = get_time_str();
-		_splitpath(info->file_name, NULL, NULL, fname, ext);
+		_splitpath(info->file_name, nullptr, nullptr, fname, ext);
 
 		string str = GetAppConfig().SaveInputDir() + fname + '_' + t + ext;
 		image.Save(str.c_str());

@@ -130,7 +130,7 @@ bool ParamPool::Save(const char * filename, int i) {
 
 CudaTensor * ParamPool::GetParameter(const string& key) {
 	auto it = params.find(key);
-	if(it != params.end()) return NULL;
+	if(it != params.end()) return nullptr;
 	return it->second;
 }
 enum DarknetLayerType {
@@ -437,7 +437,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 	netfile.close(); 
 	weightsfile.close();
 	bool r;
-	if(out_filename != NULL && 0 != *out_filename )
+	if(out_filename != nullptr && 0 != *out_filename )
 		 r = Save(out_filename);
 	else {
 		string outname(filename);

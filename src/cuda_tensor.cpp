@@ -70,7 +70,7 @@ bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 	}
 	if (gpu_data) { 
 		cudaError_t err = cudaFree(gpu_data);
-		gpu_data = NULL;
+		gpu_data = nullptr;
 		if (err != cudaSuccess) {
 			cerr << "cudaFree at 0x" << hex << setw(10) << setfill('0') << (size_t)gpu_data << " return " << (int)err << endl;
 		}

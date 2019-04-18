@@ -53,7 +53,7 @@ BatchNormModule::~BatchNormModule() {
 }
 
 bool BatchNormModule::Resize(int w, int h) {
-	if ( NULL == t_desc) return false; 
+	if ( nullptr == t_desc) return false; 
 	input_width = w;
 	input_height = h;
 	output_width = input_width;
@@ -147,7 +147,7 @@ bool BatchNormModule::Fuse() {
 	void* beta = params.BatchData(0);
 	void* gamma = params.BatchData(1);
 	if (module->bias.Elements() != output_channels) {
-		if (module->bias.Init(1, output_channels, 1, 1)) return false;
+		if (!module->bias.Init(1, output_channels, 1, 1)) return false;
 	}
 	bool r = fuse_batchnorm(module->w, module->bias,params,output_channels, module->w.Width(), module->w.Height(), module->input_channels, module->w.DataType());
 	if (r) {

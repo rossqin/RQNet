@@ -11,7 +11,7 @@ Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*&
 		sprintf(buf, "layer%02d", i);
 		name = buf;
 	}
-	last_module = NULL;
+	last_module = nullptr;
 	network = net;
 	const XMLElement* moduleElement = element->FirstChildElement("module");
 	while (moduleElement){
@@ -59,7 +59,7 @@ bool Layer::FuseBatchNormModule() {
 			if (!bm->Fuse()) return false;
 		} 
 	}
-	return false;
+	return true;
 }
 
 bool Layer::Update(float lr) {

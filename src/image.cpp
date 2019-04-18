@@ -1,21 +1,43 @@
-#include "StdAfx.h"
-#include "image.h"
+#include "stdafx.h"
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp>
+#include "image.h"
+#include "cuda_tensor.h"
 Image::Image() {
 	height = 0;
 	width = 0;
 	channels = 0;
-	data = NULL;
-	gpu_data = NULL;
+	data = nullptr;
+	gpu_data = nullptr;
 	normalized = false;
+}
+bool hwc_uc_2_chw_float(float* dst, const uint8_t* src, int w, int h, int c, bool norm);
+Image::Image(const uint8_t* mat_data, int w, int h, int c, bool norm) {
+	height = 0;
+	width = 0;
+	channels = 0;
+	size_t image_size = w * h * c;
+	data = nullptr;
+	gpu_data = nullptr;	 
+	CudaPtr<float> temp_float(image_size);
+	CudaPtr<uint8_t> temp_uchar(image_size, mat_data);
+	// convert HWC to CHW
+	bool ret = hwc_uc_2_chw_float(temp_float, temp_uchar, w, h, c, norm); 
+	normalized = norm;
+	if (ret) {
+		height = h;
+		width = w;
+		channels = c;
+		gpu_data = temp_float.ptr;
+		temp_float.ptr = nullptr;		
+	}
 }
 Image::Image(const char *filename) {
 	height = 0;
 	width = 0;
 	channels = 0;
-	data = NULL;
-	gpu_data = NULL;
+	data = nullptr;
+	gpu_data = nullptr;
 	normalized = false;
 	Load(filename);
 }
@@ -57,27 +79,27 @@ Image::Image(int w, int h, int c, float* data_cpu) {
 bool Image::PushToGPU() {
 	int e = width * height * channels; 
 	if (gpu_data) return true;
-	if (0 == e || NULL == data) return false;
+	if (0 == e || nullptr == data) return false;
 	if(cudaSuccess != cudaMalloc(&gpu_data, e * sizeof(float))) 
 		return false;
 	if (cudaSuccess != cudaMemcpy(gpu_data, data, e * sizeof(float), cudaMemcpyHostToDevice)) {
 		cudaFree(gpu_data);
-		gpu_data = NULL;
+		gpu_data = nullptr;
 		return false;
 	}
 	delete[]data;
-	data = NULL;
+	data = nullptr;
 	return true;
 }
 bool Image::PullFromGPU() {
 	if (data) return true;
 	int e = width * height * channels;
-	if (0 == e || NULL == gpu_data) return false;
+	if (0 == e || nullptr == gpu_data) return false;
 	
 	data = New float[e];
 	cudaError_t err = cudaMemcpy(data, gpu_data, e * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaFree(gpu_data);
-	gpu_data = NULL;
+	gpu_data = nullptr;
 	return (cudaSuccess == err);
 }
 void Image::Whiten() {
@@ -88,7 +110,7 @@ Image::~Image() {
 		delete[]data;
 	if (gpu_data) {
 		cudaFree(gpu_data);
-		gpu_data = NULL;
+		gpu_data = nullptr;
 	}
 }
 bool Image::Crop(Image& result, int dx, int dy, int w, int h) {
@@ -101,11 +123,11 @@ bool Image::Crop(Image& result, int dx, int dy, int w, int h) {
 	
 	if (result.data) {
 		delete[] result.data;
-		result.data = NULL;
+		result.data = nullptr;
 	}
 	if (result.gpu_data) {
 		cudaFree(result.gpu_data);
-		result.gpu_data = NULL;
+		result.gpu_data = nullptr;
 	}
 
 	if (!PushToGPU()) return false;
@@ -115,7 +137,7 @@ bool Image::Crop(Image& result, int dx, int dy, int w, int h) {
 	result.width = w;
 	result.normalized = normalized;
 	cudaMalloc(&result.gpu_data, channels * w * h * sizeof(float));
-	if (NULL == result.gpu_data) return false;
+	if (nullptr == result.gpu_data) return false;
  
 	size_t bytes = w * sizeof(float);
 
@@ -140,8 +162,8 @@ Image::Image(const Image& img) {
 	height = img.height;
 	channels = img.channels;
 	normalized = img.normalized;
-	gpu_data = NULL;
-	data = NULL;
+	gpu_data = nullptr;
+	data = nullptr;
 	if (img.data) {
 		int e = width * height * channels;
 		data = New float[e];
@@ -162,7 +184,7 @@ const Image& Image::operator=(const Image& img) {
 	normalized = img.normalized;
 	if (data) {
 		delete[]data;
-		data = NULL;
+		data = nullptr;
 	}
 	if (img.data) {
 		int e = width * height * channels;
@@ -171,7 +193,7 @@ const Image& Image::operator=(const Image& img) {
 	} 
 	if (gpu_data) {
 		cudaFree(gpu_data);
-		gpu_data = NULL;
+		gpu_data = nullptr;
 	}
 	if (img.gpu_data) {
 		int b = width * height * channels * sizeof(float);
@@ -182,11 +204,11 @@ const Image& Image::operator=(const Image& img) {
 	return *this;
 } 
 
-bool hwc_uc_2_chw_float(float* dst, const uint8_t* src, int w, int h, int c, bool norm);
+
 bool Image::Load(const char * filename, int c, bool norm ) {
  
 	//
-	uint8_t* io_buffer = NULL;
+	uint8_t* io_buffer = nullptr;
 	size_t size = 0;
 	unsigned int start_t = GetTickCount();
 	cv::Mat mat = cv::imread(filename); 
@@ -196,36 +218,30 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 		return false;
 	}
 
-	height = mat.rows;
-	width = mat.cols;
-	channels = mat.channels();
+	
 	//long t2 = GetTickCount();
 	//cout << "****** stbi_load " << filename << " in " << (t2 - t1) << "ms.\n";
-	size_t image_size = width * height * channels;
-
+	size_t image_size = mat.rows * mat.cols * mat.channels();
+	CudaPtr<float> temp_float(image_size);
+	CudaPtr<uint8_t> temp_uchar(image_size, mat.data);
 	// convert HWC to CHW
-	if (data) {
-		delete[]data;
-		data = NULL;
+	bool ret = hwc_uc_2_chw_float(temp_float, temp_uchar, mat.cols, mat.rows, mat.channels(), norm);
+	normalized = norm;
+	if (ret) {
+		
+		height = mat.rows;
+		width = mat.cols;
+		channels = mat.channels();
+		if (data) {
+			delete[]data;
+			data = nullptr;
+		}
+		if (gpu_data) {
+			cudaFree(gpu_data); 
+		}
+		gpu_data = temp_float.ptr;
+		temp_float.ptr = nullptr;
 	}
-	if (gpu_data) {
-		cudaFree(gpu_data);
-		gpu_data = NULL;
-	} 
-	cudaMalloc(&gpu_data, image_size * sizeof(float));
-	if (NULL == gpu_data) { 
-		return false;
-	}
-	uint8_t* temp = NULL;
-	cudaMalloc(&temp, image_size);
-	if (NULL == temp || (cudaSuccess != cudaMemcpy(temp, mat.data, image_size, cudaMemcpyHostToDevice))) {
-		if (temp) cudaFree(temp);
-		cudaFree(gpu_data);
-		gpu_data = NULL; 
-		return false;
-	} 
-	bool ret = hwc_uc_2_chw_float(gpu_data, temp, width, height, channels, norm);
-	cudaFree(temp);
 	
 	normalized = norm;
 	return ret;
@@ -258,7 +274,7 @@ bool Image::Gray(bool rgb /* = true */) {
 	data = new_data; 
 	if (gpu_data) {
 		cudaFree(gpu_data);
-		gpu_data = NULL;
+		gpu_data = nullptr;
 	}
 	return true; 
 }

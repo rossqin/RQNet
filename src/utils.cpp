@@ -40,7 +40,7 @@ string& trim(string& s) {
 	return s;
 }
 bool atob(const char* str) {
-	if (NULL == str) return false;
+	if (nullptr == str) return false;
 	return (0 != strcmp(str, "0") && 0 != _strcmpi(str, "false"));
 }
 
@@ -94,7 +94,7 @@ float rand_uniform_strong(float min_, float max_) {
 }
 static char time_str_buf[32];
 const char* get_time_str() {
-	time_t n = time(NULL);
+	time_t n = time(nullptr);
 	tm ti;
 	localtime_s(&ti, &n);
 	sprintf_s(time_str_buf, 32, "%04d%02d%02d%02d%02d%02d",
@@ -172,13 +172,13 @@ float square_sum_array(float *a, int n) {
 	return sum;
 }
 float* new_gpu_array(unsigned int elements, float fill_val) {
-	float* ret = NULL;
+	float* ret = nullptr;
 	size_t bytes = elements * sizeof(float);
 	cudaError_t e = cudaMallocManaged(&ret, bytes);
 	// Notice : param no.2 of the cudaMalloc function always indicates "bytes" not "elements
 	if (e != cudaSuccess) {
 		cerr << " *** Error: cudaMalloc ret " << e << " in new_gpu_array!\n";
-		return NULL;
+		return nullptr;
 	}
 	for (unsigned int n = 0; n < elements; n++) {
 		ret[n] = fill_val;
@@ -264,4 +264,10 @@ const char* get_dir_from_full_path(string& path) {
 		return path.c_str();
 	}
 	return "";
+}
+void upper(string& str) {
+	for (size_t i = 0; i < str.length(); i++) {
+		if (str[i] >= 'a' && str[i] < 'z')
+			str[i] += ('A' - 'a');
+	}
 }

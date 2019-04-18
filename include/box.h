@@ -7,7 +7,7 @@ public:
 	float w;
 	float h;
 	Box(float center, float middle, float width, float height);
-	Box(const float* var = NULL);
+	Box(const float* var = nullptr);
 	Box(const ObjectInfo& item);
 	inline float Area() const { return w * h; }
 };

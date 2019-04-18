@@ -1,7 +1,6 @@
 #pragma once
 #include "tinyxml2.h"
-using namespace tinyxml2;
-class FloatTensor4D;
+using namespace tinyxml2; 
 enum LearningRatePolicy {
 	CONSTANT, STEP, EXP, POLY, STEPS, SIG, RANDOM
 };
@@ -59,6 +58,9 @@ protected:
 	LearningRatePolicy lr_policy;
 
 	vector< pair<int, float> > lr_steps;
+	vector<string> classes;
+
+	float detect_threshhold;
 
 	int max_truths;
 
@@ -68,13 +70,21 @@ protected:
 	bool small_object;
 
 	string update_strategy;
-	 
+
+	//return dataset name
+	const char* LoadTrainingSection(XMLElement* root);
+	const char* LoadTestingSection(XMLElement* root);
+	void LoadDetectSection(XMLElement* root);
 public :
 	
 	AppConfig();
 	~AppConfig();
-
-	bool Load(const char* filename, bool training = true);
+	// mode 
+	// 0 - training
+	// 1 - test
+	// 2 - detect
+	// 3 - demo 
+	bool Load(const char* filename, int mode = 0);
 
 	inline const Dataset* GetDataSet() const { return dataset; }	
 	inline bool IsLastIteration(int i) const { return i >= stop_interation; 	}
@@ -98,6 +108,10 @@ public :
 	inline int GetMultiScaleInterval() const { return ms_interval; }
 	inline int GetMaxTruths() const { return max_truths; }
 
+	bool GetClass(int i, string& result) const;
+	inline int GetClasses() const { return (int)classes.size(); }
+	inline float GetThreshhold() const { return detect_threshhold; }
+
 	inline bool ConvParamsFreezed() const { return freezeConvParams; }
 	inline bool BNParamsFreezed() const { return freezeBNParams; }
 	inline bool ActParamsFreezed() const { return freezeActParams; }
@@ -111,8 +125,7 @@ public :
 
 	bool RadmonScale(uint32_t it, int& new_width, int& new_height) const;
 	
-	bool GetWeightsPath(uint32_t it, string& filename) const ;
-	bool DataAugument(FloatTensor4D& image) const ;
+	bool GetWeightsPath(uint32_t it, string& filename) const ; 
 	float GetCurrentLearningRate(int iteration) const;
 	
 

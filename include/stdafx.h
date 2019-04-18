@@ -76,6 +76,7 @@ void show_usage(const char* bin);
 bool f32_to_f16(__half* dst, const float* src, size_t n);
 bool f16_to_f32(float* dst, const __half* src, size_t n);
 const char* get_dir_from_full_path(string& path);
+void upper(string& str);
 #define FULL_DEBUGGING 1
 #define DEBUGGING_DIR "\\AI\\Data\\debugging\\RQNet\\"
 #endif

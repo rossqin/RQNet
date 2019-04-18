@@ -116,6 +116,7 @@ public:
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool UpdateParams(float lr);
+	inline bool IsFused() const { return fused; }
 	//Do nothing.
 	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const { return true; }
 	uint32_t GetFlops() const;

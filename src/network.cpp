@@ -3,7 +3,10 @@
 #include "config.h"
 #include "data_loader.h"
 #include "param_pool.h"
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui.hpp>
 #include "image.h"
+#include "box.h"
 static CNNNetwork network;
 CNNNetwork& GetNetwork() {
 	return network;
@@ -46,7 +49,26 @@ static cudnnDataType_t get_data_type(const string& str) {
 	 
 }
  
-bool CNNNetwork::Load(const char* filename) {
+void CNNNetwork::AddDetectionResult(const DetectionResult & data) {
+	int index = (int)detections.size() - 1; 
+	Box box(data.x, data.y, data.w, data.h );
+	while (index >= 0) {
+		DetectionResult &dr = detections[index];
+		Box box2(dr.x, dr.y, dr.w, dr.h);
+		if (BoxIoU(box, box2) > 0.8f) {
+			if (data.confidence < dr.confidence) {
+				return;
+			}
+			dr = data;
+			return; 
+		}
+		index--;
+	}
+	detections.push_back(data);
+
+}
+
+bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	tinyxml2::XMLDocument doc;
 	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
 	mini_batch = GetAppConfig().GetBatch() / GetAppConfig().GetSubdivision();
@@ -67,8 +89,12 @@ bool CNNNetwork::Load(const char* filename) {
 			data_format = CUDNN_TENSOR_NCHW;
 		}
 		str = "";
-		inputElement->QueryText("data_type", str);
-		data_type = get_data_type(str);
+		if (dt != CUDNN_DATA_HALF && dt != CUDNN_DATA_FLOAT) {
+
+			inputElement->QueryText("data_type", str);
+			upper(str);
+			data_type = get_data_type(str);
+		}
 		input_channels = 3;
 		input_width = 416;
 		input_height = 416;
@@ -88,7 +114,7 @@ bool CNNNetwork::Load(const char* filename) {
 	}
 	XMLElement* layerElement = root->FirstChildElement("layers/layer");
 	int index = 0;
-	InferenceModule* last_module = NULL;
+	InferenceModule* last_module = nullptr;
 	while (layerElement) {
 		Layer* layer = New Layer(layerElement,++index,this, last_module);
 		layers.push_back(layer);
@@ -99,7 +125,7 @@ bool CNNNetwork::Load(const char* filename) {
 }
 
 Layer * CNNNetwork::GetLayer(int index) const {
-	if (index < 0 || index >(int)layers.size()) return NULL;
+	if (index < 0 || index >(int)layers.size()) return nullptr;
 	return layers[index]; 
 }
 
@@ -114,13 +140,12 @@ bool CNNNetwork::UpdateWorkspace(size_t new_size) {
 	if (new_size > workspace_size) {
 		workspace_size = new_size;
 		cudaFree(workspace);
-		workspace = NULL;
+		workspace = nullptr;
 		return cudaSuccess == cudaMalloc(&workspace, workspace_size);
 	}
 	return true;
 }
 bool CNNNetwork::Forward(bool training) {
-	loss = 0.0;
 	ForwardContext context = { training,
 		GetAppConfig().ConvParamsFreezed(),
 		GetAppConfig().BNParamsFreezed(),
@@ -150,11 +175,6 @@ bool CNNNetwork::Backward() {
 }
 
 bool CNNNetwork::Train() { 
-	if (!cuDNNInitialize()) {
-		cerr << "CUDNN initialization failed!\n";
-		return false;
-	}
-	
 	DataLoader loader;
 
 	string filename("loss_");
@@ -215,7 +235,7 @@ bool CNNNetwork::Train() {
 			if (!Backward()) return false;   
 		}
 		
-		loss /=  GetAppConfig().GetBatch();
+		loss /= GetAppConfig().GetSubdivision();
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
@@ -306,5 +326,103 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp1
 	xml.close();
 	bin.close();
 
+	return true;
+}
+bool CNNNetwork::Detect(const char* filename) {
+	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !filename)
+		return false;
+	int max_truths = GetAppConfig().GetMaxTruths();
+	if (!truths) truths = New ObjectInfo[max_truths];
+	memset(truths, 0, sizeof(ObjectInfo) * max_truths);
+	string s(filename);
+	ifstream f(replace_extension(s, ".txt"));
+	if (!f.is_open()) {
+		cerr << " Error: label image `" << s << "` does not exist!\n";
+		return false;
+	} 
+	int i = 0;
+	 
+	while (getline(f, s)) { 
+		const char* ptr = s.c_str();
+		truths[i].class_id = get_next_int(ptr);
+		truths[i].x = get_next_float(ptr);
+		truths[i].y = get_next_float(ptr);
+		truths[i].w = get_next_float(ptr);
+		truths[i].h = get_next_float(ptr);
+		i++;
+		if (i == max_truths) break;
+	}
+	f.close();
+	if (i < max_truths)
+		truths[i].class_id = -1;
+	cv::Mat mat = cv::imread(filename);
+ 
+
+	if (mat.empty()) {
+		cerr << "\nError: Cannot load image `" << filename << "`!\n";
+		return false;
+	}
+	Image image(reinterpret_cast<uint8_t*>(mat.data), mat.cols, mat.rows, mat.channels());
+	 
+	if (!image.ResizeTo(input_width, input_height) || 
+		!image.PullFromGPU()) {
+		cerr << " Error: failed to resize image to "<< input_width << " x " << 
+			input_height << " detection task!\n";
+		return false;
+	} 
+	input = image.GetData();
+	input_channels = image.GetChannels(); 
+
+	ForwardContext context = { false, false, false, false, nullptr, max_truths, truths };
+	detections.clear();
+	for (int i = 0; i < (int)layers.size(); i++) {
+		Layer* l = layers[i];
+#if 0
+		if(!l->FuseBatchNormModule()){
+			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n";
+			input = nullptr;
+			return false;
+		}
+#endif
+		if (!l->Forward(context)) {
+			cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
+			input = nullptr;
+			return false;
+		}
+	}
+	input = nullptr;
+	string name;
+	int l, r, t, b;
+	cv::Scalar color(30, 70, 220 );
+	for (int i = 0; i < (int)detections.size(); i++) {
+		DetectionResult& dr = detections[i];
+		GetAppConfig().GetClass(dr.class_id, name);
+		l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
+		r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
+		t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
+		b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
+		cv::Point ptTopLeft(l, t), ptTopRight(r, t), ptBottomRight(r, b), ptBottomLeft(l, b);
+		
+		cv::line(mat, ptTopLeft, ptTopRight, color, 3);
+		cv::line(mat, ptTopRight, ptBottomRight, color, 3);
+		cv::line(mat, ptBottomRight, ptBottomLeft, color, 3);
+		cv::line(mat, ptBottomLeft, ptTopLeft, color, 3);
+		
+		char conf_text[20];
+		if (dr.confidence == 1.0f)
+			strcpy(conf_text, ": 100%");
+		else {
+			sprintf(conf_text, ": %.2f%%", dr.confidence * 100.0f);
+		}
+		ptTopLeft.y -= 15;
+		cv::putText(mat, name + conf_text, ptTopLeft, cv::FONT_HERSHEY_COMPLEX, 0.8, color, 2);
+		cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] "  << conf_text << endl;
+	}
+	vector<int> params;
+	params.push_back(cv::IMWRITE_JPEG_QUALITY);
+	params.push_back(90);
+	
+	cv::imwrite("preditions.jpg", mat, params);
+	
 	return true;
 }
