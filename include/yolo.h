@@ -39,6 +39,6 @@ public:
 	~YoloModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	uint32_t GetFlops() const;
 };

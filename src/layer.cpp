@@ -73,9 +73,10 @@ void Layer::Print() const
 {
 }
 
-bool Layer::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, bool fp16) const{
+bool Layer::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset) const{
 	for (size_t i = 0; i < modules.size(); i++) {
-		if (!modules[i]->OutputIRModel(xml, bin, edges, bin_offset, fp16)) 
+		InferenceModule* module = modules[i];
+		if (!module->OutputIRModel(xml, bin, edges, bin_offset))
 			return false;
 	}
 	return true;

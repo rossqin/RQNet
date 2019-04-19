@@ -57,7 +57,7 @@ bool forward_maxpool(CudaTensor& output, const CudaTensor& input, int* indexes,
 	
 	if (input.DataType() == CUDNN_DATA_HALF) {
 		CudaPtr<float> in(input.Elements()); 
-		if (f16_to_f32(in, reinterpret_cast<__half*>(input.Data()), input.Elements())) {
+		if (!f16_to_f32(in, reinterpret_cast<__half*>(input.Data()), input.Elements())) {
 			cudaFree(in);
 			return false;
 		}

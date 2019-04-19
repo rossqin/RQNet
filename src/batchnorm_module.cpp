@@ -138,20 +138,18 @@ bool BatchNormModule::UpdateParams(float lr) {
 uint32_t BatchNormModule::GetFlops() const {
 	return 0;
 }
-bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, int channels, int w, int h, int channels_in, cudnnDataType_t data_type);
+bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, 
+	int output_channels, int filter_size, cudnnDataType_t data_type);
 bool BatchNormModule::Fuse() {
 	if (prevs.size() != 1) return false;
 	if (fused) return true;
 	ConvolutionalModule* module = dynamic_cast<ConvolutionalModule*>(prevs[0]);
-	if (!module) return false; 
-	void* beta = params.BatchData(0);
-	void* gamma = params.BatchData(1);
+	if (!module) return false;  
 	if (module->bias.Elements() != output_channels) {
 		if (!module->bias.Init(1, output_channels, 1, 1)) return false;
 	}
-	bool r = fuse_batchnorm(module->w, module->bias,params,output_channels, module->w.Width(), module->w.Height(), module->input_channels, module->w.DataType());
-	if (r) {
-		fused = true;
-	}
+	bool r = fuse_batchnorm(module->w, module->bias,params,output_channels,
+		module->w.Elements3D(), module->w.DataType());
+	if (r) fused = true; 
 	return r;
 }

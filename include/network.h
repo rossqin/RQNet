@@ -54,6 +54,8 @@ public:
 	inline int MiniBatch() const { return mini_batch; }
 	inline void RegisterLoss(float l) { loss += l; }
 	inline float GetLoss() const { return loss; } 
+
+	inline const char* Precision() const { return (data_type == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	
 	inline int GetAnchorCount() const { return (int)anchors.size(); } 
 	inline const string& DefaultActivation() const { return def_actvation; }
@@ -72,7 +74,7 @@ public:
 	bool Detect(const char* filename);
 	
 	
-	bool OutputIRModel(const string& dir, const string& name, bool fp16 = true) const;
+	bool OutputIRModel(const string& dir, const string& name) const;
 };
 CNNNetwork& GetNetwork();
 ModulePool& GetModulePool();

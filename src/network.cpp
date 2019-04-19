@@ -55,7 +55,7 @@ void CNNNetwork::AddDetectionResult(const DetectionResult & data) {
 	while (index >= 0) {
 		DetectionResult &dr = detections[index];
 		Box box2(dr.x, dr.y, dr.w, dr.h);
-		if (BoxIoU(box, box2) > 0.8f) {
+		if (BoxIoU(box, box2) > 0.7f) {
 			if (data.confidence < dr.confidence) {
 				return;
 			}
@@ -193,15 +193,6 @@ bool CNNNetwork::Train() {
 	float avg_loss = -1.0;  
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
 	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
-#if 0
- 
-	ifstream f(DEBUGGING_DIR "input01.bin", ios::binary);
-	f.read(reinterpret_cast<char*>(input), input_len);
-	f.close();
-	f.open(DEBUGGING_DIR "truth01.bin", ios::binary);
-	f.read(reinterpret_cast<char*>(truths), truth_len);
-	f.close();
-#endif
 	while (!GetAppConfig().IsLastIteration(it)) {
 		loss = 0.0;
 		it++;
@@ -217,20 +208,7 @@ bool CNNNetwork::Train() {
 			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height)) {
 				return false;
 			} 
-		
-#if 0
-			t = GetTickCount() - t;
-
-			char dbg_filename[MAX_PATH];
-			sprintf(dbg_filename, DEBUGGING_DIR "input%02d.bin", i); 
-			ofstream f(dbg_filename, ios::binary);
-			f.write(reinterpret_cast<char*>(input), input_len);
-			f.close();
-			sprintf(dbg_filename, DEBUGGING_DIR "truth%02d.bin", i); 
-			f.open(dbg_filename, ios::binary);
-			f.write(reinterpret_cast<char*>(truths), truth_len);
-			f.close(); 
-#endif			
+				
 			if (!Forward(true)) return false; 
 			if (!Backward()) return false;   
 		}
@@ -261,10 +239,6 @@ bool CNNNetwork::Train() {
 		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
 			(new_width != input_width || new_height != input_width) ) {
 			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
-			cudaError_t err = cudaPeekAtLastError();
-			if (err != cudaSuccess) {
-				cerr << "cuda Error:" << (int)err << endl;
-			}
 			input_width = new_width;
 			input_height = new_height;
 			input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
@@ -277,7 +251,7 @@ bool CNNNetwork::Train() {
 	return true;
 }
 
-bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp16) const {
+bool CNNNetwork::OutputIRModel(const string & dir, const string & name) const {
 	string prefix = dir;
 	if (prefix.find_first_of('\\') != prefix.length() - 1 &&
 		prefix.find_first_of('/') != prefix.length() - 1)
@@ -296,7 +270,8 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp1
 	stringstream edges;
 	size_t bin_offset = 0;
  
-	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<< (fp16 ? "FP16" : "FP32")<<"\" type=\"Input\">" << endl;
+	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<<
+		((data_type == CUDNN_DATA_FLOAT) ? "FP16" : "FP32")<<"\" type=\"Input\">" << endl;
 	xml << "        <output>" << endl;
 	xml << "          <port id = \"0\">" << endl;
 	xml << "            <dim>" << 1 << "</dim>" << endl;
@@ -308,7 +283,12 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name, bool fp1
 	xml << "    </layer>" << endl;
  
 	for (size_t i = 0; i < layers.size(); i++) {
-		if (!(layers[i]->OutputIRModel(xml, bin, edges, bin_offset, fp16))) {
+		Layer* l = layers[i];
+		if (!l->FuseBatchNormModule()) {
+			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n"; 
+			return false;
+		}
+		if (!(l->OutputIRModel(xml, bin, edges, bin_offset))) {
 			return false;
 		}
 	}
@@ -377,13 +357,12 @@ bool CNNNetwork::Detect(const char* filename) {
 	detections.clear();
 	for (int i = 0; i < (int)layers.size(); i++) {
 		Layer* l = layers[i];
-#if 0
+ 
 		if(!l->FuseBatchNormModule()){
 			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n";
 			input = nullptr;
 			return false;
-		}
-#endif
+		} 
 		if (!l->Forward(context)) {
 			cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
 			input = nullptr;

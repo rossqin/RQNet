@@ -348,3 +348,53 @@ bool CudaTensor::Save(const char * filename, int batch) {
 	f.close();
 	return true;
 }
+
+bool CudaTensor::DisplayInFile(const char * filename, int batch) {
+	ofstream f(filename, ios::trunc);
+	if (!f.is_open()) return false;
+	int batch_start = 0;
+	int batch_stop = n;
+	if (batch >= 0 && batch < n) {
+		batch_start = batch;
+		batch_stop = batch + 1;
+	}
+	if (data_type == CUDNN_DATA_FLOAT)
+		f << "FP32 [" << n << ", " << c << ", " << h << ", " << w << "]\n";
+	else
+		f << "FP16 [" << n << ", " << c << ", " << h << ", " << w << "]\n";
+	int c_size = c * h * w;
+	char temp[200];
+	CudaPtr<float> buffer(c_size);
+	CpuPtr<float> buffer_cpu(c_size);
+	
+	for (int b = batch_start; b < batch_stop; b++) {
+		f << "batch: " << b << endl;
+		if (data_type == CUDNN_DATA_FLOAT) {
+			float* src = reinterpret_cast<float*>(gpu_data) + b * c_size;
+			if (cudaSuccess != cudaMemcpy(buffer.ptr, src, c_size * sizeof(float), cudaMemcpyDeviceToDevice)) {
+				return false;
+			}
+		}
+		else {
+			__half* src = reinterpret_cast<__half*>(gpu_data) + b * c_size;
+			if (!f16_to_f32(buffer, src, c_size))
+				return false;
+		}
+		if (cudaSuccess != cudaMemcpy(buffer_cpu.ptr, buffer.ptr, c_size * sizeof(float), cudaMemcpyDeviceToHost)) {
+			return false;
+		}
+		for (int i = 0; i < c_size; i++) {
+			if ((i + 1) % w == 0)
+				sprintf(temp, "%.6f \n", buffer_cpu[i]);
+			else 
+				sprintf(temp, "%.6f ", buffer_cpu[i]);
+			f << temp;
+			if ((i + 1) % (h * w) == 0)
+				f << endl;
+		}
+		f << endl;
+
+	}
+	f.close();
+	return false;
+}

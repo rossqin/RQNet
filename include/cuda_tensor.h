@@ -86,7 +86,7 @@ public:
 	inline int Width() const { return w; }
 	inline int Elements() const { return elements; }
 	inline void* Data() const { return gpu_data; }
-	inline void DataType(cudnnDataType_t t) { data_type = t; }
+	inline void DataType(cudnnDataType_t t) { data_type = t; byte_per_element = (t == CUDNN_DATA_FLOAT) ? sizeof(float) : sizeof(__half); }
 	inline int Bytes() const { return bytes; }
 	inline int Elements2D() const { return (data_format == CUDNN_TENSOR_NCHW) ? h * w : c * w; }
 	inline int Elements3D() const { return h * w * c; }
@@ -106,8 +106,6 @@ public:
 	bool Push(const float* cpu_data, int pos = 0, int length = -1);
 	bool Push(const char* cpu_data, const tensor_data_header& header);
 	bool Pull(float *cpu_data, int pos = 0, int length = -1) const ;
-	bool Activate(int activation);
-	bool Griadent(const CudaTensor& ref, int activation);
 	bool Concat(const vector<const CudaTensor*>& src);
 	bool Split(const vector<CudaTensor*>& dest) const;
 	bool UpSample(CudaTensor& output, int stride_w, int stride_h);
@@ -119,4 +117,5 @@ public:
 	bool Release();
 	bool Randomize();
 	bool Save(const char* filename, int batch = -1);
+	bool DisplayInFile(const char* filename, int batch = -1);
 };

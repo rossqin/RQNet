@@ -498,49 +498,39 @@ void* gamma = params.BatchData(1);
 void* running_mu = params.BatchData(2);
 void* running_var = params.BatchData(3);
 */
-__global__ static void fuse_batchnorm_kernel(void* filters, void* bias, void* batchnorm_params, int channels, int w, int h, int channels_in, cudnnDataType_t data_type) {
-	int index = blockIdx.x * blockDim.x + threadIdx.x;
-	int size = w * h;
-	int elements = channels * size;
+__global__ static void fuse_batchnorm_kernel(void* filters, void* bias, void* batchnorm_params, int output_channels, int filter_size, cudnnDataType_t data_type) {
+	int index = blockIdx.x * blockDim.x + threadIdx.x; 
  
-	while (index < channels) { 
+	while (index < output_channels) {
 		if (data_type == CUDNN_DATA_FLOAT) {
 			float* filters_f = reinterpret_cast<float*>(filters);
 			float* bias_f = reinterpret_cast<float*>(bias);
 			float* beta = reinterpret_cast<float*>(batchnorm_params);
-			float* gamma = beta + channels;
-			float* mu = gamma + channels;
-			float* var = mu + channels;
-			float temp = gamma[index] / sqrt(var[index] * var[index] + 1.0e-5);
-			float alpha = temp / size;
-			bias_f[index] += (beta[index] - mu[index] * temp);
-			for (int i = 0; i < channels_in; i++) {
-				for (int j = 0; j < h; j++) {
-					for (int k = 0; k < w; k++) {
-						filters_f[i * elements + index * size + j * w + k] *= alpha;
-					}
-				}
+			float* gamma = beta + output_channels;
+			float* mu = gamma + output_channels;
+			float* var = mu + output_channels;
+			float temp = gamma[index] / sqrt(var[index] + 1.0e-5);
+			//float alpha = temp / size;
+			bias_f[index] += (beta[index] - mu[index] * temp); 
+			int f_i = index * filter_size;
+			for (int i = 0; i < filter_size; i++, f_i++) {
+				filters_f[f_i] *= temp; 
 			} 
 		}
 		else {
 			__half* filters_h = reinterpret_cast<__half*>(filters);
 			__half* bias_h = reinterpret_cast<__half*>(bias);
 			__half* beta = reinterpret_cast<__half*>(batchnorm_params);
-			__half* gamma = beta + channels;
-			__half* mu = gamma + channels;
-			__half* var = mu + channels;
+			__half* gamma = beta + output_channels;
+			__half* mu = gamma + output_channels;
+			__half* var = mu + output_channels;
 
-			__half temp = __hdiv(gamma[index], hsqrt( __hadd(__hmul(var[index], var[index]), __float2half(1.0e-5))));
+			__half temp = __hdiv(gamma[index], hsqrt( __hadd(var[index] , __float2half(1.0e-5))));
 		 
-			__half alpha = __hdiv(temp , __float2half(size));
 			bias_h[index] = __hadd(bias_h[index],(beta[index] - mu[index] * temp));
-			for (int i = 0; i < channels_in; i++) {
-				for (int j = 0; j < h; j++) {
-					for (int k = 0; k < w; k++) {
-						int dest_index = i * elements + index * size + j * w + k;
-						filters_h[dest_index] = __hmul(filters_h[dest_index], alpha);
-					}
-				}
+			int f_i = index * filter_size;
+			for (int i = 0; i < filter_size; i++, f_i++) {
+				filters_h[f_i] = __hmul(filters_h[f_i], temp); 
 			}
 		}
 
@@ -549,10 +539,11 @@ __global__ static void fuse_batchnorm_kernel(void* filters, void* bias, void* ba
 
 
 }
-bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, int channels, int w, int h, int channels_in, cudnnDataType_t data_type) {
-	int g = GPUGridSize();
+bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, int output_channels, int filter_size, cudnnDataType_t data_type) {
 	int b = GPUBlockSize();
-	fuse_batchnorm_kernel<<<g, b >>>(filters, bias, batchnorm_params, channels, w, h, channels_in, data_type);
+	int g = output_channels / b;
+	if (output_channels % b) g++;
+	fuse_batchnorm_kernel<<<g, b >>>(filters, bias, batchnorm_params, output_channels, filter_size, data_type);
 
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {

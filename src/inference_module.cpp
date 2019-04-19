@@ -136,14 +136,15 @@ bool InferenceModule::Forward(ForwardContext & context) {
 
 	if (n == 1) { 
 		InferenceModule* module = prevs[0];
-		if (!context.training) {
-			//check if fused
-			BatchNormModule* bnModule = dynamic_cast<BatchNormModule*>(module);
-			if (bnModule && bnModule->IsFused()) {
-				module = module->prevs[0];
-			}
-		}
-		input = module->output;
+		if (context.training)  
+			input = module->output;
+		else { 
+			if (module->output.Elements() == 0) //fused bn
+				input = *(context.input);
+			else
+				input = module->output;
+		} 
+			
 		w = input.Width();
 		h = input.Height();
 	}
@@ -219,7 +220,7 @@ bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	return true;//delta.Release(); 
 }
 
-bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, bool fp16) const {
+bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset) const {
 	int n = prevs.size();
 	if (0 == n) {
 		edges << "    <edge from-layer=\"0\" from-port=\"0\" to-layer=\"" << index 
@@ -234,7 +235,7 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 	}
 	if (n < 2) return true;
 	string concat_name = name + ".concat";
-	xml << "    <layer id=\"" << output_index << "\" name=\"" << concat_name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"Concat\">" << endl;
+	xml << "    <layer id=\"" << output_index << "\" name=\"" << concat_name << "\" precision=\"" << Precision() << "\" type=\"Concat\">" << endl;
 	xml << "      <data axis=\"1\"/>" << endl;
 	xml << "      <input>" << endl;
 	for (int i = 0; i < n; i++) {
@@ -253,6 +254,7 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 	xml << "          <dim>" << input_height << "</dim>" << endl;
 	xml << "          <dim>" << input_width << "</dim>" << endl;
 	xml << "      </output>" << endl;
+	xml << "    </layer>" << endl;
 	edges << "    <edge from-layer=\"" << output_index << "\" from-port=\"" << n <<
 		"\" to-layer=\"" << index << "\" to-port=\"0\"/>" << endl;
 	return true;
@@ -305,17 +307,18 @@ bool ActivationModule::Backward(CudaTensor & delta) {
 	//delta.Save(DEBUGGING_DIR "activation.after02.bin", 1);
 	return DistributeDeltas(delta);
 }
-bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
+bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
  
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
 	string t;
 	switch (mode) {
-	case CUDNN_ACTIVATION_RELU: 
-		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"ReLU\">" << endl;
+	case  LEAKY:
+	case RELU:
+		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"ReLU\">" << endl;
 		xml << "      <data negative_slope=\"" << factor << "\" />" << endl;
 		break;
-	case CUDNN_ACTIVATION_SIGMOID:
-		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" >" << endl;
+	case LOGISTIC:
+		xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" >" << endl;
 		xml << "      <data type=\"sigmoid\" />" << endl;
 		break;
 	default:
@@ -368,9 +371,9 @@ bool UpSampleModule::Backward(CudaTensor & delta) {
 	if (!temp.DownSample(delta, stride_w, stride_h)) return false; 
 	return DistributeDeltas(delta);
 }
-bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"Resample\">" << endl;
+bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Resample\">" << endl;
 	//<data />
 	xml << "      <data antialias=\"0\" factor=\""<< stride_w <<"\" type=\"caffe.ResampleParameter.NEAREST\" />" << endl;
 	WritePorts(xml);

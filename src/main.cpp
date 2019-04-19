@@ -18,8 +18,7 @@ static const char* get_file_name(const char* path) {
 }
  
 bool network_train(const char* data_definition, const char*  network_definition, const char* weights_path) {
-	
-	
+
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 	
 	if (!GetAppConfig().Load(data_definition)) {
@@ -95,7 +94,53 @@ bool detect_image(const char* data_definition, const char*  network_definition, 
 bool detect_video(const char*  network_definition, const char* weights_path, const char* video_file) {
 	return false;
 }
+bool convert_openvino(const char*  network_definition, const char* weights_path, const char* data_type, const char* ouput_dir ,const char* name ) {
  
+	cudnnDataType_t t = CUDNN_DATA_DOUBLE;
+	if (data_type && *data_type) {
+		string s(data_type);
+		if (s == "FP32")
+			t = CUDNN_DATA_FLOAT;
+		else if (s == "FP16")
+			t = CUDNN_DATA_HALF;
+		else {
+			cerr << " Warning: unrecognized data type `" << data_type << "`! Use default data type defined in network configuration.\n";
+		}
+	}
+
+	string dir(ouput_dir);
+	if (dir.empty()) {
+		dir = network_definition;
+		get_dir_from_full_path(dir);
+	}
+	struct stat s = { 0 };
+	stat(dir.c_str(), &s);
+	if (0 == (s.st_mode & S_IFDIR)) {
+		if (_mkdir(dir.c_str())) {
+			cerr << "Error: Failed to create directory `" << dir << "` for output! \n";
+			return false;
+		}
+	}
+	if (!GetNetwork().Load(network_definition, t)) {
+		cerr << "Error: Cannot load network definition file " << network_definition << endl;
+		return false;
+	}
+	if (!GetParamPool().Load(weights_path)) {
+		cerr << "Error: Cannot load weights file " << weights_path << endl;
+		return false;
+	}
+	string s_name(name);
+	if (s_name.empty()) {
+		s_name = get_file_name(network_definition);
+		replace_extension(s_name, ".ir");
+	}
+	if (!GetNetwork().OutputIRModel(dir, s_name)) {
+		cerr << "Error: Create Failed!\n";
+		return false;
+	}
+	cout << "INFO: successfully reated IR model !\n";
+	return true;
+}
 const char data_def_message[] = "Required. dataset definition(in xml)\n";
 const char network_def_message[] = "Required. network definition(in xml)\n";
 const char weights_message[] = "Required in train and detect mode";
@@ -195,39 +240,7 @@ int main(int argc, char* argv[]) {
 		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_i, FLAGS_o); 
 	}
 	else if (strcmp(command, "openvino") == 0) {
-		string name(FLAGS_t);
-
-		string dir(FLAGS_o);
-		if (dir.empty()) {
-			dir = FLAGS_n;
-			get_dir_from_full_path(dir);
-		}
-		struct stat s = { 0 };
-		stat(dir.c_str(), &s);
-		if (0 == (s.st_mode & S_IFDIR)) {
-			if (_mkdir(dir.c_str())) {
-				cerr << "Error: Failed to create directory `" << dir << "` for output! \n";
-				return 1;
-			}
-		}
-		if (!GetNetwork().Load(FLAGS_n)) {
-			cerr << "Error: Cannot load network definition file " << FLAGS_n << endl;
-			return 1;
-		}
-		if (!GetParamPool().Load(FLAGS_w)) {
-			cerr << "Error: Cannot load weights file " << FLAGS_w << endl;
-			return 1;
-		}
-		
-		if (name.empty()) {
-			name = get_file_name(FLAGS_n);
-			replace_extension(name, ".ir");
-		}
-		if (!GetNetwork().OutputIRModel(dir, name, strcmp(FLAGS_d, "FP16") == 0)) {
-			cerr << "Error: Create Failed!\n"  ;
-			return 1;
-		}
-		cout << "INFO: successfully reated IR model !\n";
+		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_d, FLAGS_o, FLAGS_t);
 	}
 	if(ret) return 0; 
 	return 1;

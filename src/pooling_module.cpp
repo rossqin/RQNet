@@ -96,18 +96,14 @@ bool PoolingModule::Backward(CudaTensor & delta) {
 	if (!backward_maxpool(delta, temp, indexes, window, stride, pad)) return false;	
 	return DistributeDeltas(delta);
 }
-bool PoolingModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"Pooling\">" << endl;
+bool PoolingModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Pooling\">" << endl;
 	xml << "      <data auto_pad=\"valid\" exclude-pad=\"true\" kernel=\"" << window_h << "," << window_w;
-	if (stride_h == 1 && stride_w == 1) { // f
-		xml << "\" pads_begin=\"0,0\" pads_end=\"1,1\" pool-method=\"max\" strides=\""
+ 
+	xml << "\" pads_begin=\""<< pad_ht <<"," << pad_wl <<"\" pads_end=\"" << pad_hb << "," << pad_wr << "\" pool-method=\"max\" strides=\""
 			<< stride_h << "," << stride_w << "\" />" << endl;
-	}
-	else {
-		xml << "\" pads_begin=\"0,0\" pads_end=\"0,0\" pool-method=\"max\" strides=\""
-			<< stride_h << "," << stride_w << "\" />" << endl;
-	}
+	 
 	WritePorts(xml); 
 	xml << "    </layer>" << endl;
 	return true;

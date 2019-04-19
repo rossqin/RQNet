@@ -411,9 +411,9 @@ bool YoloModule::Backward(CudaTensor& delta) {
 	return shortcut_delta.Release();
 }
 
-bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"RegionYolo\">" << endl;
+bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"RegionYolo\">" << endl;
 	//<data />
 	//<data axis="1" classes="1" coords="4" do_softmax="0" end_axis="3" mask="0,1,2" num="9"/>
 	xml << "      <data axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  

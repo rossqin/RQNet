@@ -36,13 +36,14 @@ public:
 	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	virtual ~InferenceModule() {};
 	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev);
+	inline const char* Precision() const { return (input.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	inline int GetOutputChannels() const { return output_channels; }
 	bool UpdateShortcutDelta(const CudaTensor& delta);
 	virtual bool Forward(ForwardContext& context) ;
 	virtual bool Backward(CudaTensor& delta) ;
 	virtual bool UpdateParams(float lr) { return true; }
 	virtual bool DistributeDeltas(CudaTensor& delta);
-	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	virtual uint32_t GetFlops() const = 0;
 };
 class BatchNormModule;
@@ -76,7 +77,7 @@ public :
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool UpdateParams(float lr);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	uint32_t GetFlops() const;
 };
  
@@ -98,7 +99,7 @@ public :
 	~PoolingModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	uint32_t GetFlops() const;
 };
 class BatchNormModule : public InferenceModule {
@@ -118,7 +119,7 @@ public:
 	bool UpdateParams(float lr);
 	inline bool IsFused() const { return fused; }
 	//Do nothing.
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const { return true; }
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const { return true; }
 	uint32_t GetFlops() const;
 	bool Fuse();
 };
@@ -132,7 +133,7 @@ public:
 	~ActivationModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	uint32_t GetFlops() const;
 };
 class UpSampleModule : public InferenceModule {
@@ -145,7 +146,7 @@ public:
 	~UpSampleModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
 	uint32_t GetFlops() const;
 };
 
@@ -158,6 +159,6 @@ public:
 	~DeconvModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const { return false; }
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const { return false; }
 	uint32_t GetFlops() const { return 0; }
 };

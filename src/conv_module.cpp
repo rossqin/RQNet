@@ -97,7 +97,6 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 	}
 	if (!InferenceModule::Forward(context)) return false;
 	float one = 1.0f, zero = 0.0f;
-	
 
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
 		input.Descriptor(), input , w_desc, w, conv_desc, fwd_algo,
@@ -106,10 +105,12 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 		cerr << "Error: Forwarding failed in `" << name << "`. Error code :" << (int)status << endl;
 		return false;
 	}
+	bool ret = true;
 	if (bias.Channel() == output_channels) {
-		return output.Add(bias);
+		ret = output.Add(bias);
 	}
-	return true;
+	//output.Save(DEBUGGING_DIR "conv02.output.bin", 1);
+	return ret;
 }
 bool ConvolutionalModule::Backward(CudaTensor& delta) {
 
@@ -219,10 +220,10 @@ group equals 2 means that both input and output channels are separated into 2 gr
 and i-th output group is connected to i-th input group channels. 
 group equals number of output feature maps denotes depth-wise separable convolution
 */
-bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, bool fp16) const {
+bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
 	
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, fp16)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << (fp16 ? "FP16" : "FP32") << "\" type=\"Convolution\">" << endl;
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Convolution\">" << endl;
 	xml << "      <data auto_pad=\"same_upper\" dilations=\"" << dilation_h << "," << dilation_w
 		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << output_channels
 		<< "\" pads_begin=\"" << padding_h << "," << padding_w << "\" pads_end=\"" << padding_h << "," << padding_w
@@ -230,22 +231,20 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	WritePorts(xml);
 	xml << "      <blobs>" << endl;
  
-	 
-	unique_ptr<char> bias_cpu(New char[w.Bytes()]);
-	unique_ptr<char> w_cpu(New char[bias.Bytes()]);
-	if (cudaSuccess != cudaMemcpy(w_cpu.get(), w, w.Bytes(), cudaMemcpyDeviceToHost)) return false;
-	if (cudaSuccess != cudaMemcpy(bias_cpu.get(), bias, bias.Bytes(), cudaMemcpyDeviceToHost)) return false;
+	
+	CpuPtr<char> w_cpu(w.Bytes(), w.Data());
+	CpuPtr<char> bias_cpu(bias.Bytes(), bias.Data()); 
  
 	
 	/*
 	Weights layout is GOIYX (GOIZYX for 3D convolution),
 	which means that X is changing the fastest, then Y, then Input, Output, then Group.
 	*/
-	bin.write(w_cpu.get(), w.Bytes());
+	bin.write(w_cpu.ptr, w.Bytes());
 	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << w.Bytes() << "\" />" << endl;
 	bin_offset += w.Bytes();
 
-	bin.write(bias_cpu.get(), bias.Bytes());
+	bin.write(bias_cpu.ptr, bias.Bytes());
 	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << bias.Bytes() << "\" />" << endl;
 	bin_offset += bias.Bytes();
 
