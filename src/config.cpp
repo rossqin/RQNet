@@ -153,8 +153,8 @@ AppConfig::AppConfig() {
 
 	ms_enable = false;
 	ms_interval = 20; 
-	batch = 32;
-	subdivision = 8;
+	batch = 1;
+	subdivision = 1;
 
 	//learning_rates ;
 	lr_base = 0.001f;
@@ -170,7 +170,7 @@ AppConfig::AppConfig() {
 	lr_scale = 1.0f;
 	lr_power = 4.0f;
 	lr_gamma = 1.0f;
-	detect_threshhold = 0.5;
+	detect_threshhold = 0.4;
 }
 
 AppConfig::~AppConfig()

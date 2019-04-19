@@ -95,6 +95,8 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 			upper(str);
 			data_type = get_data_type(str);
 		}
+		else
+			data_type = dt;
 		input_channels = 3;
 		input_width = 416;
 		input_height = 416;
