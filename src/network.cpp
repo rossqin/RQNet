@@ -272,8 +272,7 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name) const {
 	stringstream edges;
 	size_t bin_offset = 0;
  
-	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<<
-		((data_type == CUDNN_DATA_FLOAT) ? "FP16" : "FP32")<<"\" type=\"Input\">" << endl;
+	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<< Precision() <<"\" type=\"Input\">" << endl;
 	xml << "        <output>" << endl;
 	xml << "          <port id = \"0\">" << endl;
 	xml << "            <dim>" << 1 << "</dim>" << endl;

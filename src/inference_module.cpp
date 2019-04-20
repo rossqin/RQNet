@@ -230,7 +230,20 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 	if (n > 1) output_index--;
 	for (int i = 0; i < n; i++) {
 		InferenceModule* module = prevs[i];
-		edges << "    <edge from-layer=\"" << module->index << "\" from-port=\"" << module->output_port <<
+		int from_port = module->output_port;
+		int from_index = module->index;
+		BatchNormModule* bn_module = dynamic_cast<BatchNormModule*>(module);
+		if (bn_module && bn_module->IsFused()) {
+			ConvolutionalModule* con_module = dynamic_cast<ConvolutionalModule*>(bn_module->prevs[0]);
+			if (!con_module) {
+				cerr << " Error: Fused Batchnorm Module does not follow Convolutional Module!\n";
+				return false;
+			}
+			module = con_module;
+			from_port = module->output_port;
+			from_index = module->index;
+		}
+		edges << "    <edge from-layer=\"" << from_index << "\" from-port=\"" << from_port <<
 			"\" to-layer=\"" << output_index << "\" to-port=\"" << i << "\"/>" << endl;
 	}
 	if (n < 2) return true;
@@ -248,11 +261,13 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 		xml << "        </port>" << endl;
 	}
 	xml << "      </input>" << endl;
-	xml << "      <output id=\""<<n<<"\">" << endl;
+	xml << "      <output>" << endl;
+	xml << "        <port id = \"" << n << "\">" << endl;
 	xml << "          <dim>1</dim>" << endl;
 	xml << "          <dim>" << input_channels << "</dim>" << endl;
 	xml << "          <dim>" << input_height << "</dim>" << endl;
 	xml << "          <dim>" << input_width << "</dim>" << endl;
+	xml << "        </port>" << endl;
 	xml << "      </output>" << endl;
 	xml << "    </layer>" << endl;
 	edges << "    <edge from-layer=\"" << output_index << "\" from-port=\"" << n <<
