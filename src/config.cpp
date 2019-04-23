@@ -44,7 +44,7 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	te->QueryFloatText("learning_rate/power", lr_power);
 	te->QueryFloatText("learning_rate/gamma", lr_gamma);
 	te->QueryBoolText("restart", restart_interation);
-	te->QueryIntText("max_truths", max_truths);
+//	te->QueryIntText("max_truths", max_truths);
 
 
 	te->QueryText("update_strategy", update_strategy);
@@ -119,8 +119,7 @@ bool AppConfig::GetClass(int i, string& result) const {
 void AppConfig::LoadDetectSection(XMLElement * root) {
 	XMLElement* ds = root->FirstChildElement("detect-settings");
 	if (!ds) return;
-	ds->QueryIntText("max_truths", max_truths);
-	ds->QueryFloatText("thresh_hold", detect_threshhold);
+//	ds->QueryIntText("max_truths", max_truths);	
 	XMLElement* cls = ds->FirstChildElement("classes/class");
 	while (cls) {
 		const char* text = cls->GetText();
@@ -170,7 +169,7 @@ AppConfig::AppConfig() {
 	lr_scale = 1.0f;
 	lr_power = 4.0f;
 	lr_gamma = 1.0f;
-	detect_threshhold = 0.4;
+	thresh_hold = 0.4f;
 }
 
 AppConfig::~AppConfig()
@@ -188,6 +187,7 @@ bool AppConfig::Load(const char * filename, int mode) {
 	XMLElement* root = doc.RootElement();
 	if (!root) return false;
 	small_object = root->BoolAttribute("small-object", true);
+	root->QueryFloatText("thresh_hold", thresh_hold);
 	const XMLElement* ds = nullptr;
 	if (0 == mode || 1 == mode) {
 		ds = root->FirstChildElement("datasets");

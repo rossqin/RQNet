@@ -81,8 +81,8 @@ static bool LoadImageLabel(const char * filename, ImageLabelParseInfo* info) {
 		return false;
 	}
 	char line[512];
-	//BoxLabelItem item;
-	vector<ObjectInfo> items;
+	//BoxLabelItem item; 
+	info->truths->clear();
 	ObjectInfo ti;
 	float lowest_w, lowest_h, factor_w, factor_h;
 	int crop_w, crop_h;
@@ -118,8 +118,7 @@ static bool LoadImageLabel(const char * filename, ImageLabelParseInfo* info) {
 
 		if (info->orig_h == info->actual_h && info->orig_w == info->actual_w) {
 			i++;
-			items.push_back(ti);
-			if (i > info->max_boxes) break;
+			info->truths->push_back(ti); 
 			continue;
 		}
 
@@ -229,20 +228,13 @@ static bool LoadImageLabel(const char * filename, ImageLabelParseInfo* info) {
 
 
 		i++;
-		items.push_back(ti);
-		if (i > info->max_boxes) break;
+		info->truths->push_back(ti); 
 	}
 	file.close();
-	//// end of 
-	ObjectInfo * item = info->truth_data;
-	i = 0; 
-	while (items.size() > 0) {
-		int index = random_gen() % items.size();
-		*item++ = items[index];
-		items.erase(items.begin() + index);
-		i++;
-	} 
-	if (i < GetAppConfig().GetMaxTruths()) item->class_id = -1;
+	if (info->truths->size() > 1) {
+		auto seed = chrono::system_clock::now().time_since_epoch().count();
+		shuffle(info->truths->begin(), info->truths->end(), default_random_engine(seed));
+	}
 	return true;
 }
 
@@ -300,11 +292,11 @@ static void load_image_in_thread(ImageLabelParseInfo* info) {
 		replace_extension(str, ".txt");
 		ofstream file(str);
 		if (file.is_open()) {
-			ObjectInfo* temp = info->truth_data;
-			while (temp->class_id != -1) {
-				file << (int)temp->class_id << " " << setprecision(6) <<
-					temp->x << " " << temp->y << " " << temp->w << " " << temp->h << endl;
-				temp++;
+			LPObjectInfos truths = info->truths;
+			for (int i = 0;  i <(int)truths->size() ; i++) {
+				ObjectInfo& truth = truths->at(i);
+				file << (int)truth.class_id << " " << setprecision(6) <<
+					truth.x << " " << truth.y << " " << truth.w << " " << truth.h << endl;
 			}
 			file.close();
 		}
@@ -315,7 +307,7 @@ static void load_image_in_thread(ImageLabelParseInfo* info) {
 	//cout << buffer;
 }
  
-bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channels, int mini_batch, int width, int height) {
+bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data , int channels, int mini_batch, int width, int height) {
 	
  
 	//Image image; 
@@ -341,14 +333,13 @@ bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channe
 		ImageLabelParseInfo* info = New ImageLabelParseInfo();
 #else
 		ImageLabelParseInfo* info = &g_info;
-#endif
-		info->max_boxes = GetAppConfig().GetMaxTruths();
+#endif 
 		info->small_object = GetAppConfig().SmallObjEnabled();
 		info->classes = (int)ds->GetClasses();
 		info->actual_w = width;
 		info->actual_h = height;
 		info->image_data = input;
-		info->truth_data = truth_data;
+		info->truths = truth_data[i];
 		info->file_name = filename;
 		info->channels = channels;
 		info->image_size = image_size;
@@ -362,8 +353,7 @@ bool DataLoader::MiniBatchLoad(float* input, ObjectInfo* truth_data , int channe
 		if (info->failed) {
 			return false;
 		}
-#endif
-		truth_data += GetAppConfig().GetMaxTruths();
+#endif 
 		input += image_size;
 		
 	}	

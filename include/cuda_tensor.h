@@ -27,7 +27,11 @@ public:
 	T*  ptr;
 	cudaError_t GetError() const { return err; }
 	operator T*() const { return ptr; }
-	T operator [](int i) const { return ptr[i]; }
+	T& operator [](int i) { return ptr[i]; }
+	inline void Reset() { memset(ptr, 0, bytes); }
+	inline int Length() const { return len; }
+	inline int Bytes() const { return bytes; }
+	inline bool Pull(const void* gpu_data) { return cudaSuccess == cudaMemcpy(ptr, gpu_data, bytes, cudaMemcpyDeviceToHost); }
 	CpuPtr(int length, const void* src = nullptr) {
 		len = length;
 		ptr = New T[length];

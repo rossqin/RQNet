@@ -11,6 +11,7 @@
 			<path>E:\AI\Data\areca-train\test</path>
 		</dataset>
 	</datasets>
+	<thresh_hold>0.4</thresh_hold>
 	<train-settings freeze-conv="false" freeze-activation="false" freeze-batchnorm="true">
 		<dataset>my-dataset-for-training</dataset>
 		<save_input>false</save_input>
@@ -41,7 +42,7 @@
 		<batch>64</batch>
 		<subdivision>4</subdivision>
 		<learning_rate>
-			<base>0.0001</base>
+			<base>0.00001</base>
 			<burn_in>1000</burn_in>
 			<policy>steps</policy>
 			<steps>
@@ -49,8 +50,7 @@
 				<step iteration="40000" rate="0.000001" />
 			</steps>
 		</learning_rate>		
-		<restart>true</restart>
-		<max_truths>256</max_truths> 
+		<restart>false</restart>
 	</train-settings>
 	<test-settings>
 		<dataset>my-dataset-for-testing</dataset>
@@ -59,7 +59,6 @@
 		<classes>
 			<class>areca</class>
 		</classes>
-		<thresh_hold>0.2</thresh_hold>
-		<max_truths>256</max_truths>
+		
 	</detect-settings>
 </RQNet-Config>

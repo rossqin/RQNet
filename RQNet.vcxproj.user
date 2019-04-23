@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>detect -d config.xml -n networks\tiny-yolov3.xml -w yolov3-tiny-areca.rweights -i E:\AI\Data\areca-train\train\DJI_0756_4.jpg</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>train -d config.xml -n networks\tiny-yolov3.xml -w yolov3-tiny-areca.rweights</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
     <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
   </PropertyGroup>

@@ -31,7 +31,7 @@ bool network_train(const char* data_definition, const char*  network_definition,
 		cerr << "Load network file `" << network_definition << "` failed!\n";
 		return false;
 	}
-	cout << " Done !\n Loading parameters from `" << weights_path << "... ";
+	cout << " Done !\n Loading parameters from `" << weights_path << "`... ";
 	
 	if (!GetParamPool().Load(weights_path)) {
 		cout << " Failed! \n";
@@ -134,7 +134,8 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 		s_name = get_file_name(network_definition);
 		replace_extension(s_name, ".ir");
 	}
-	if (!GetNetwork().OutputIRModel(dir, s_name)) {
+	int l_index = 1;
+	if (!GetNetwork().OutputIRModel(dir, s_name, l_index)) {
 		cerr << "Error: Create Failed!\n";
 		return false;
 	}
@@ -183,8 +184,6 @@ int main(int argc, char* argv[]) {
 #ifdef _DEBUG
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 #endif	 
-
-
 	cudaError_t err = cudaGetDeviceCount(&gpu_device_cnt);
 	cout << " " << gpu_device_cnt << " GPU detected." << endl << endl;
 	if (argc < 3) {
@@ -237,10 +236,13 @@ int main(int argc, char* argv[]) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);
 	}
 	else if (strcmp(command, "wconv") == 0) {
-		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_i, FLAGS_o); 
+		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_w, FLAGS_o); 
 	}
 	else if (strcmp(command, "openvino") == 0) {
 		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_d, FLAGS_o, FLAGS_t);
+	}
+	else {
+		show_usage(exe);
 	}
 	if(ret) return 0; 
 	return 1;

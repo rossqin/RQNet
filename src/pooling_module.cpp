@@ -96,8 +96,8 @@ bool PoolingModule::Backward(CudaTensor & delta) {
 	if (!backward_maxpool(delta, temp, indexes, window, stride, pad)) return false;	
 	return DistributeDeltas(delta);
 }
-bool PoolingModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+bool PoolingModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset,l_index)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Pooling\">" << endl;
 	xml << "      <data auto_pad=\"valid\" exclude-pad=\"true\" kernel=\"" << window_h << "," << window_w;
  

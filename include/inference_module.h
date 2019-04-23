@@ -11,7 +11,7 @@ class CNNNetwork;
 typedef map<string, InferenceModule*> ModulePool;
 class InferenceModule {
 protected:
-	int index;
+	mutable int index;
 	int output_port;
 	int input_height;
 	int input_width;
@@ -43,7 +43,7 @@ public:
 	virtual bool Backward(CudaTensor& delta) ;
 	virtual bool UpdateParams(float lr) { return true; }
 	virtual bool DistributeDeltas(CudaTensor& delta);
-	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
+	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	virtual uint32_t GetFlops() const = 0;
 };
 class BatchNormModule;
@@ -77,7 +77,7 @@ public :
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool UpdateParams(float lr);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
  
@@ -99,7 +99,7 @@ public :
 	~PoolingModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
 class BatchNormModule : public InferenceModule {
@@ -119,7 +119,7 @@ public:
 	bool UpdateParams(float lr);
 	inline bool IsFused() const { return fused; }
 	//Do nothing.
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const { return true; }
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const { return true; }
 	uint32_t GetFlops() const;
 	bool Fuse();
 };
@@ -133,7 +133,7 @@ public:
 	~ActivationModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
 class UpSampleModule : public InferenceModule {
@@ -146,7 +146,7 @@ public:
 	~UpSampleModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const;
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
 
@@ -159,6 +159,6 @@ public:
 	~DeconvModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const { return false; }
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const { return false; }
 	uint32_t GetFlops() const { return 0; }
 };

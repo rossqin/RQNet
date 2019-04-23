@@ -93,6 +93,7 @@ bool ParamPool::Save(const char * filename, int i) {
 
 	f.write(reinterpret_cast<char*>(&header), sizeof(param_file_header));
 	f.write(reinterpret_cast<char*>(str_buf), str_bytes);
+	delete[]str_buf;
 
 	tensor_data_header data_header;
 	index = 0;
@@ -151,13 +152,15 @@ struct DarknetLayer {
 	int channels;
 	int stride; 
 	int layers[8];
+
+	bool focal_loss; 
 	
 	char activation[20];
 	char output_id[20];
 	char last_module[40];
 	char anchors[40];
 };
-bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, const char* out_filename) {
+bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, const char* out_dir) {
 	fstream netfile(cfg , ios::in);
 	ifstream weightsfile(filename , ios::binary);
 	int layer_index = 0;
@@ -208,6 +211,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 			}
 			else if (layer_type == "yolo") {
 				temp.layer_type = DLT_YOLO;
+				temp.focal_loss = true;
 			}
 			else if (layer_type == "route") {
 				temp.layer_type = DLT_ROUTE;
@@ -303,12 +307,19 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					anchors.push_back(atoi(strs[i].c_str()));
 				}
 			}
+			else if (key == "focal_loss") {
+				currentLayer.focal_loss = (val == "1") || (val == "true");
+			}
 		} 
 	}
 	netfile.close();
-	string cfg_new(cfg);
-	replace_extension(cfg_new, ".xml");
-	netfile.open(cfg_new.c_str(),ios::out | ios::trunc);
+	char fname[MAX_PATH];
+	_splitpath(cfg, nullptr, nullptr, fname, nullptr);
+	string dest_dir(out_dir);
+	if (dest_dir.at(dest_dir.length() - 1) != '/' && dest_dir.at(dest_dir.length() - 1) != '\\')
+		dest_dir += '/';
+	 
+	netfile.open((dest_dir + fname + ".xml").c_str(),ios::out | ios::trunc);
 	
 	if(netfile.is_open()){
 		netfile << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" <<
@@ -385,10 +396,14 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				cout << "Load " << param_name << ": " << tensor->Bytes() << " bytes.\n";
 				tensor->Push(cpu_data);
 				delete[]cpu_data;
-				params.insert(pair<string, CudaTensor*>(param_name, tensor));
-				netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation 
-					<< "\" before=\"" << before << "\" />\n";
-				sprintf(l.last_module, "%s.activation", l.output_id);
+				params.insert(pair<string, CudaTensor*>(param_name, tensor)); 
+				if (strcmpi(l.activation, "linear")) {
+					netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation
+						<< "\" before=\"" << before << "\" />\n";
+					sprintf(l.last_module, "%s.activation", l.output_id);
+				}
+				else
+					sprintf(l.last_module, "%s.convolution", l.output_id);
 				before = l.last_module;
 				break;
 			case DLT_MAXPOOL:
@@ -396,7 +411,13 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				
 				netfile << "\t\t\t<module id=\"pool\" type=\"max-pool\" window-w=\"" << l.size
 					<< "\" window-h=\"" << l.size << "\" stride-w=\"" << l.stride <<
-					"\" stride-h=\"" << l.stride << "\"  before=\"" << before << "\" />\n";
+					"\" stride-h=\"" << l.stride << "\" ";
+
+				if (l.stride == 1) {
+					netfile << "pads_begin=\"0,0\" pads_end=\"1,1\" ";
+				}
+				
+				netfile << "before=\"" << before << "\" />\n";
 
 				sprintf(l.last_module, "%s.pool", l.output_id);
 				before = l.last_module; 
@@ -425,7 +446,8 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				break;
 			case DLT_YOLO:
 				netfile << "\t\t\t<module id=\"yolo\" type=\"yolo-detection\" before=\"" << before 
-					<< "\" ignore-thresh=\"0.7\" truth-thresh=\"1.0\" anchor-masks=\"" << l.anchors << "\" />\n";
+					<< "\" ignore-thresh=\"0.7\" truth-thresh=\"1.0\" anchor-masks=\"" << l.anchors 
+					<< "\" focal-loss=\""<< (l.focal_loss ? "true" : "false") <<"\" />\n";
 				before = "";
 			} 
 			if (l.layer_type != DLT_ROUTE)
@@ -433,17 +455,19 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 
 		}
 		netfile << "\t</layers>\n</net>\n";
+		cout << "\n INFO - Network definition file `"  << dest_dir <<  fname << ".xml` written successfully!\n";
+		netfile.close();
 	}
-	netfile.close(); 
+	
 	weightsfile.close();
-	bool r;
-	if(out_filename != nullptr && 0 != *out_filename )
-		 r = Save(out_filename);
-	else {
-		string outname(filename);
-		replace_extension(outname, ".rweights");
-		r = Save(outname.c_str());
+	  
+	bool r = Save((dest_dir + fname + ".rweights").c_str());
+	if (r) {
+		cout << "\n INFO -  Weights file `" << dest_dir << fname << ".rweights written successfully!\n";
 	}
+	else
+		cerr << " Error: file `" << dest_dir << fname << ".rweights written failed!\n";
+ 
 	
 	for (auto e : params) {
 		delete e.second;

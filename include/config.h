@@ -60,10 +60,7 @@ protected:
 	vector< pair<int, float> > lr_steps;
 	vector<string> classes;
 
-	float detect_threshhold;
-
-	int max_truths;
-
+	float thresh_hold;
 	bool freezeConvParams;
 	bool freezeBNParams;
 	bool freezeActParams;
@@ -106,11 +103,10 @@ public :
 
 	inline bool MultiScaleEnable() const { return ms_enable; }
 	inline int GetMultiScaleInterval() const { return ms_interval; }
-	inline int GetMaxTruths() const { return max_truths; }
 
 	bool GetClass(int i, string& result) const;
 	inline int GetClasses() const { return (int)classes.size(); }
-	inline float GetThreshhold() const { return detect_threshhold; }
+	inline float ThreshHold() const { return thresh_hold; }
 
 	inline bool ConvParamsFreezed() const { return freezeConvParams; }
 	inline bool BNParamsFreezed() const { return freezeBNParams; }

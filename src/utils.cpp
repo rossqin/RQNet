@@ -235,14 +235,15 @@ const char* replace_extension(string& str, const char* new_ext) {
 * RQNet wconv -c darknet-net-def.cfg -i darknet-weights.weights -o darknet
 */
 void show_usage(const char* bin) {
-	cout << "\n\nUsage : " << bin << " train|test|detect|demo|wconv [options]\n\n  Options \n\n";
+	cout << "\n\nUsage : " << bin << " train|test|detect|demo|wconv|openvino [options]\n\n  Options \n\n";
 	cout << "  To train a network:\n    " << bin << " train -d <path/to/data/defintions> -n <path/to/network/defintion> [-w <path/to/weights>]\n";
 	cout << "\n        weights file is .pb file. If weights file is not given, then a random set of weighs are initialized.\n\n\n";
 	cout << "  To test a network: \n    " << bin << " test  -d <path/to/data/defintions> -n <path/to/network/defintion> -w <path/to/weights>\n\n\n";
 	cout << "  To detect objects in image:\n    " << bin << " detect -n <path/to/network/defintion> -w <path/to/weights> -i <path/to/image>\n\n\n";
-	cout << "  To detect objects in video:\n    " << bin << " detect -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]\n";
+	cout << "  To detect objects in video:\n    " << bin << " demo -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]\n";
 	cout << "\n       If input file is not given, then use a camera.\n\n\n";
-	cout << "  To convert .weights file to .pb files:\n    " << bin << " detect -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]\n\n\n";
+	cout << "  To convert .weights file to .rweights files:\n    " << bin << " wconv -c <path/to/darknet/network/config> -w <path/to/darknet/weights> [-o <dir/of/output>]\n\n\n";
+	cout << " To create openvino IR models\n    " << bin << " openvino -n <path/to/RQNet/network/definition> -w <path/to/rweights> -d <FP32|FP16> -o <dir/of/output> -t <modeltitle>\n"; 
 	cout << " *** ATTENSION ***\n\n";
 	cout << " This program is running only with CUDA support!\n\n";
 

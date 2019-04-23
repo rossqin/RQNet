@@ -92,9 +92,6 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 }
 
 bool ConvolutionalModule::Forward(ForwardContext & context) {
-	if (name == "layer03.convolution") {
-		cout << "checkpoint\n";
-	}
 	if (!InferenceModule::Forward(context)) return false;
 	float one = 1.0f, zero = 0.0f;
 
@@ -220,9 +217,10 @@ group equals 2 means that both input and output channels are separated into 2 gr
 and i-th output group is connected to i-th input group channels. 
 group equals number of output feature maps denotes depth-wise separable convolution
 */
-bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
+bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const {
 	
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset,l_index)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Convolution\">" << endl;
 	xml << "      <data auto_pad=\"same_upper\" dilations=\"" << dilation_h << "," << dilation_w
 		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << output_channels
@@ -234,7 +232,39 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	
 	CpuPtr<char> w_cpu(w.Bytes(), w.Data());
 	CpuPtr<char> bias_cpu(bias.Bytes(), bias.Data()); 
- 
+	if (prevs.size() == 0) {
+		// the first module, we need to divide 255
+		if (w.DataType() == CUDNN_DATA_FLOAT) {
+			float* pf = reinterpret_cast<float*>(w_cpu.ptr);
+			for (int i = 0; i < w.Elements(); i++) {
+				pf[i] = pf[i] / 255.0f;
+			}
+		}
+		else {
+			__half* ph = reinterpret_cast<__half*>(w_cpu.ptr);
+			float t;
+			for (int i = 0; i < w.Elements(); i++) { 
+				t = __half2float(ph[i]) / 255.0f;				
+				ph[i] = __float2half(t) ;
+			}
+
+		}
+	}
+	
+// 	float *display = reinterpret_cast<float*>(w_cpu.ptr);
+// 	__half temp;
+// 	char line[100];
+// 	unsigned int ui;
+// 	unsigned short us;
+// 	for (int i = 0; i < w.Elements(); i++) {
+// 		temp = __float2half(display[i]);
+// 		ui = *(reinterpret_cast<unsigned int *>(display + i));
+// 		us = *(reinterpret_cast<unsigned short *>(&temp));
+// 		sprintf(line, "%03d : 0x%08x(%.6f) - 0x%04x\n", i, ui, display[i], us);
+// 		
+// 		cout << line;
+// 		
+// 	}
 	
 	/*
 	Weights layout is GOIYX (GOIZYX for 3D convolution),

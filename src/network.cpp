@@ -7,7 +7,7 @@
 #include <opencv2/highgui.hpp>
 #include "image.h"
 #include "box.h"
-static CNNNetwork network;
+CNNNetwork network;
 CNNNetwork& GetNetwork() {
 	return network;
 }
@@ -33,7 +33,12 @@ CNNNetwork::~CNNNetwork() {
 	for (auto m = module_pool.begin(); m != module_pool.end(); m++) {
 		delete m->second;
 	} 
-	if (truths) delete[]truths;
+	if (truths) {
+		for (int i = 0; i < mini_batch; i++) {
+			delete truths[i];
+		}
+		delete[]truths;
+	}
 	if (input) delete[] input;
 }
 static cudnnDataType_t get_data_type(const string& str) {
@@ -97,6 +102,11 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		}
 		else
 			data_type = dt;
+
+		if(data_type == CUDNN_DATA_HALF) 
+			cout << "\n *** Data type: FP16\n";
+		else
+			cout << "\n *** Data type: FP32\n";
 		input_channels = 3;
 		input_width = 416;
 		input_height = 416;
@@ -122,7 +132,10 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		layers.push_back(layer);
 		layerElement = layerElement->NextSiblingElement();
 	}
-	truths = New ObjectInfo[mini_batch * GetAppConfig().GetMaxTruths()];
+	truths = New LPObjectInfos[mini_batch];
+	for (int i = 0; i < mini_batch; i++) {
+		truths[i] = New vector<ObjectInfo>();
+	}
 	return true;
 }
 
@@ -152,9 +165,8 @@ bool CNNNetwork::Forward(bool training) {
 		GetAppConfig().ConvParamsFreezed(),
 		GetAppConfig().BNParamsFreezed(),
 		GetAppConfig().ActParamsFreezed(),
-		nullptr,
-		GetAppConfig().GetMaxTruths(),
-		truths };
+		nullptr
+	};
 	for (int i = 0; i < (int)layers.size(); i++) {
 		Layer* l = layers[i];
 		if (!l->Forward(context)) {
@@ -194,18 +206,19 @@ bool CNNNetwork::Train() {
 	string weights_file;
 	float avg_loss = -1.0;  
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
-	size_t truth_len = mini_batch * GetAppConfig().GetMaxTruths() * sizeof(ObjectInfo);
+	 
 	while (!GetAppConfig().IsLastIteration(it)) {
-		loss = 0.0;
+		loss = 0.0f;
+		training_batch = 0;
+		true_positives = 0.0f;
+		false_negatives = 0.0f;
 		it++;
 		clock_t start_clk = clock(); 		
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
 			
 
 			//cout << "\nSubdivision " << i << ": loading data ... ";
-			long t = GetTickCount();
-
-			memset(truths, 0, truth_len);
+			long t = GetTickCount(); 
 			memset(input, 0,  input_len);
 			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height)) {
 				return false;
@@ -215,7 +228,9 @@ bool CNNNetwork::Train() {
 			if (!Backward()) return false;   
 		}
 		
-		loss /= GetAppConfig().GetSubdivision();
+		loss /= training_batch;
+		true_positives /= training_batch;
+		false_negatives /= training_batch;
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
@@ -223,7 +238,7 @@ bool CNNNetwork::Train() {
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
 		float lr = GetAppConfig().GetCurrentLearningRate(it);
 		cout << "\n >> It " << it << " | Loss: " << loss <<", Avg-Loss: "<< avg_loss 
-			<<", Learn-Rate: " << lr << ", Time: " << (ms * 0.001) << "s, Images: "
+			<<", TP: "<< true_positives <<"%, FN: "<< false_negatives  <<"%, Learn-Rate: " << lr << ", Time: " << (ms * 0.001) << "s, Images: "
 			<< it * GetAppConfig().GetBatch() << ".\n\n";
 		 
 		ofstream ofs(filename,ios::app);
@@ -253,7 +268,7 @@ bool CNNNetwork::Train() {
 	return true;
 }
 
-bool CNNNetwork::OutputIRModel(const string & dir, const string & name) const {
+bool CNNNetwork::OutputIRModel(const string & dir, const string & name, int& l_index) const {
 	string prefix = dir;
 	if (prefix.find_first_of('\\') != prefix.length() - 1 &&
 		prefix.find_first_of('/') != prefix.length() - 1)
@@ -289,7 +304,7 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name) const {
 			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n"; 
 			return false;
 		}
-		if (!(l->OutputIRModel(xml, bin, edges, bin_offset))) {
+		if (!(l->OutputIRModel(xml, bin, edges, bin_offset, l_index))) {
 			return false;
 		}
 	}
@@ -309,35 +324,108 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name) const {
 
 	return true;
 }
+void CNNNetwork::GetAnchorsStr(string & str) const {
+	str = "";
+	for (int i = 0; i < (int)anchors.size(); i++) {
+		auto& a = anchors[i];
+		int w = (int)(a.first * 416.0f);
+		int h = (int)(a.second * 416.0f);
+		str += to_string(w) + "," + to_string(h);
+		if (i != (int)anchors.size() - 1) {
+			str += ",";
+		}
+	}
+}
+void DrawTruthInGrid(const cv::Mat& orig_img, int stride, const cv::Scalar& color, const vector<ObjectInfo>* truths) {
+	cv::Mat temp = cv::Mat::zeros(1024, 1024, CV_8UC3);
+
+	resize(orig_img, temp, temp.size());
+	int w = temp.cols;
+	int h = temp.rows;
+
+	int step_w = w / stride;
+	int step_h = h / stride;
+
+	for (int y = 0; y < h; y += step_h) {
+		cv::Point2i start(0, y), stop(w - 1, y);
+		cv::line(temp, start, stop, color);
+	}
+	for (int x = 0; x < w; x += step_w) {
+		cv::Point2i start(x, 0), stop(x, h - 1);
+		cv::line(temp, start, stop, color);
+	} 
+	for (int i = 0; i < (int)truths->size(); i++) {
+		const ObjectInfo& truth = truths->at(i);
+		int x = (int)(truth.x * stride);
+		int y = (int)(truth.y * stride);
+		int p_x = (int)(truth.x * w);
+		int p_y = (int)(truth.y * h);
+		cv::Point2i pos( p_x - 30, p_y - 10);
+		char text[100];
+		sprintf(text, "(%d,%d)", x, y);
+		string str(text);
+		cv::Scalar text_color(23, 35, 60);
+		cv::putText(temp, str, pos, cv::FONT_HERSHEY_COMPLEX, 0.8, text_color, 2);
+		cv::circle(temp, cv::Point2i(p_x, p_y), 5, cv::Scalar(0, 0, 255), 5);
+		
+	}
+	vector<int> params;
+	params.push_back(cv::IMWRITE_JPEG_QUALITY);
+	params.push_back(90);
+	char filename[MAX_PATH];
+	sprintf(filename, "truth_in_%02d.jpg", stride);
+	cv::imwrite(filename, temp, params);
+
+
+}
 bool CNNNetwork::Detect(const char* filename) {
 	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !filename)
 		return false;
-	int max_truths = GetAppConfig().GetMaxTruths();
-	if (!truths) truths = New ObjectInfo[max_truths];
-	memset(truths, 0, sizeof(ObjectInfo) * max_truths);
+	
+#if 0 
 	string s(filename);
 	ifstream f(replace_extension(s, ".txt"));
 	if (!f.is_open()) {
 		cerr << " Error: label image `" << s << "` does not exist!\n";
 		return false;
 	} 
+
 	int i = 0;
-	 
+	int x, y;
+	int i_13, j_13, mod_i_13, mod_j_13;
+	int i_26, j_26, mod_i_26, mod_j_26;
+ 
+	ObjectInfo truth;
+	truths[0]->clear();
 	while (getline(f, s)) { 
 		const char* ptr = s.c_str();
-		truths[i].class_id = get_next_int(ptr);
-		truths[i].x = get_next_float(ptr);
-		truths[i].y = get_next_float(ptr);
-		truths[i].w = get_next_float(ptr);
-		truths[i].h = get_next_float(ptr);
-		i++;
-		if (i == max_truths) break;
-	}
-	f.close();
-	if (i < max_truths)
-		truths[i].class_id = -1;
-	cv::Mat mat = cv::imread(filename);
+		
+		truth.class_id = get_next_int(ptr);
+		truth.x = get_next_float(ptr);
+		truth.y = get_next_float(ptr);
+		truth.w = get_next_float(ptr);
+		truth.h = get_next_float(ptr);
  
+		x = (int)(truth.x * input_width);
+		y = (int)(truth.y * input_height);
+		i_13 = x / 32; mod_i_13 = x % 32; j_13 = y / 32; mod_j_13 = y % 32;
+		i_26 = x / 16; mod_i_26 = x % 16; j_26 = y / 16; mod_j_26 = y % 16;
+
+		cout << " The " << i << "th truth data:(" << x << ", " << y << 
+			"), object in [" << i_13 << "," << j_13 <<
+			  "] / 13x13,[" << i_26 << "," << j_26 << "] / 26x26.\n";
+		i++; 
+
+		truths[0]->push_back(truth);
+	}
+	f.close(); 
+#endif
+	cv::Mat mat = cv::imread(filename);
+
+	
+	//DrawTruthInGrid(mat, 32, cv::Scalar(40, 20, 230), truths[0]);
+	//DrawTruthInGrid(mat, 16, cv::Scalar(17, 83, 230), truths[0]);
+
 
 	if (mat.empty()) {
 		cerr << "\nError: Cannot load image `" << filename << "`!\n";
@@ -351,21 +439,22 @@ bool CNNNetwork::Detect(const char* filename) {
 			input_height << " detection task!\n";
 		return false;
 	} 
+	if (input) delete[]input;
 	input = image.GetData();
 	input_channels = image.GetChannels(); 
 
-	ForwardContext context = { false, false, false, false, nullptr, max_truths, truths };
+	ForwardContext context = { false, false, false, false, nullptr};
 	detections.clear();
 	for (int i = 0; i < (int)layers.size(); i++) {
 		Layer* l = layers[i];
  
 		if(!l->FuseBatchNormModule()){
-			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n";
+			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n"; 
 			input = nullptr;
 			return false;
 		} 
 		if (!l->Forward(context)) {
-			cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
+			cerr << " Error: Forward failed in  " << l->GetName() << "!\n"; 
 			input = nullptr;
 			return false;
 		}
@@ -381,12 +470,8 @@ bool CNNNetwork::Detect(const char* filename) {
 		r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
 		t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
 		b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
-		cv::Point ptTopLeft(l, t), ptTopRight(r, t), ptBottomRight(r, b), ptBottomLeft(l, b);
-		
-		cv::line(mat, ptTopLeft, ptTopRight, color, 3);
-		cv::line(mat, ptTopRight, ptBottomRight, color, 3);
-		cv::line(mat, ptBottomRight, ptBottomLeft, color, 3);
-		cv::line(mat, ptBottomLeft, ptTopLeft, color, 3);
+		cv::Point ptTopLeft(l, t),  ptBottomRight(r, b);
+		cv::rectangle(mat, ptTopLeft, ptBottomRight, color, 2); 
 		
 		char conf_text[20];
 		if (dr.confidence == 1.0f)
@@ -396,13 +481,17 @@ bool CNNNetwork::Detect(const char* filename) {
 		}
 		ptTopLeft.y -= 15;
 		cv::putText(mat, name + conf_text, ptTopLeft, cv::FONT_HERSHEY_COMPLEX, 0.8, color, 2);
+		int baseline = 0;
+		cv::Size size =  cv::getTextSize(name + conf_text, cv::FONT_HERSHEY_COMPLEX, 0.8, 2, &baseline);
 		cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] "  << conf_text << endl;
 	}
 	vector<int> params;
 	params.push_back(cv::IMWRITE_JPEG_QUALITY);
 	params.push_back(90);
 	
-	cv::imwrite("preditions.jpg", mat, params);
+	cv::imwrite("predictions.jpg", mat, params);
+
+	cout << " INFO: output written to predictions.jpg!\n";
 	
 	return true;
 }

@@ -9,8 +9,6 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, Inf
 	InferenceModule(element, l,net, prev) {
 	 
 	GetPrevModules(element);
-	threshold_ignore = element->FloatAttribute("ignore-thresh",0.5);
-	threshold_thruth = element->FloatAttribute("truth-thresh", 1.0);
 	focal_loss = element->BoolAttribute("focal-loss", false);
 
 	const char* s = element->Attribute("anchor-masks");
@@ -39,6 +37,8 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, Inf
 	output.DataType(CUDNN_DATA_FLOAT);
 	Resize(input_width, input_width);
 	output_channels = input_channels;
+	object_loss_factor = 5.0f;
+	class_loss_factor = 2.0f;
 
 }
 YoloModule::~YoloModule() { 
@@ -55,7 +55,6 @@ enum {
 	INDEX_PROBILITY_CLASS_3
 	//...
 };
-bool debugging = false;
 static Box get_yolo_box(const float *data, const AnchorBoxItem& anchor, int x, int y, float reciprocal_w, float reciprocal_h, int stride) {
 	Box b;
 	b.x = (*data + x) * reciprocal_w;// reciprocal_w == 1 / w 
@@ -79,20 +78,20 @@ int YoloModule::EntryIndex(int anchor, int loc, int entry) {
  
 	return (anchor * features + entry) * output.Elements2D() + loc;
 }
-void YoloModule::DeltaBackground(float* data, float* delta, ObjectInfo* truths, int max_boxes, float& avg_anyobj) {
+void YoloModule::DeltaBackground(float* data, float* delta, const vector<ObjectInfo>& truths, float& avg_anyobj) {
 	float reciprocal_w = 1.0 / output.Width();
 	float reciprocal_h = 1.0 / output.Height(); 
 	for (int y = 0, offset = 0; y < output.Height(); y++) {
 		for (int x = 0; x < output.Width(); x++, offset++) {
-			for (int n = 0; n < masked_anchors.size(); n++) { // l.n == 3
+			for (int n = 0; n < (int) masked_anchors.size(); n++) { // l.n == 3
 															  // sigmoid(tx),sigmoid(ty),tw,th,Pr(Obj),Pr(Cls_0|Obj),Pr(Cls_0|Obj)...
 				int box_index = EntryIndex(n, offset, INDEX_PROBILITY_X); 
 				Box pred = get_yolo_box(data + box_index, masked_anchors[n],
 					x, y, reciprocal_w, reciprocal_h, output.Elements2D());
 				float best_iou = 0;
 				int best_t = 0;
-				for (int t = 0; t < max_boxes; t++) {
-					ObjectInfo& truth = truths[t];
+				for (int t = 0; t < (int)truths.size(); t++) {
+					const ObjectInfo& truth = truths[t];
 					if (truth.class_id < 0) break;
 					float iou = BoxIoU(pred, Box(truth));
 					if (iou > best_iou) { best_iou = iou; best_t = t; }
@@ -100,7 +99,7 @@ void YoloModule::DeltaBackground(float* data, float* delta, ObjectInfo* truths, 
 				// class_index : point to Pr(Obj)
 				int object_index = box_index + (INDEX_CONFIDENCE - INDEX_PROBILITY_X) * output.Elements2D();
 				avg_anyobj += data[object_index]; 
-				if (best_iou > threshold_ignore) {					
+				if (best_iou > 0.7) {					
 					delta[object_index] = 0.0f;//初始化全是背景，离目标较近的忽略，梯度为0
 				} 
 				else {
@@ -108,9 +107,9 @@ void YoloModule::DeltaBackground(float* data, float* delta, ObjectInfo* truths, 
 				}
 
 				// 更近的视为目标(不过这一步效果不太好，所以阈值设为1，永远不执行)
-				if (best_iou > threshold_thruth) {
+				if (best_iou > 1.0) {
 					delta[object_index] = 1 - data[object_index];
-					ObjectInfo& truth = truths[best_t];//network->Truth(b, best_t);
+					const ObjectInfo& truth = truths[best_t];//network->Truth(b, best_t);
 					int class_id = truth.class_id;
 					int class_index = object_index + output.Elements2D(); // * (INDEX_PROBILITY_CLASS_0 - INDEX_CONFIDENCE) ;
 					DeltaClass(data, delta, class_id, class_index);
@@ -147,6 +146,7 @@ bool YoloModule::Resize(int w, int h) {
 }
  
 bool YoloModule::Detection() {
+	std::cout << "Start Analyze the " << input_width << "x" << input_height << " layer ...\n";
 	CpuPtr<float> output_cpu(output.Elements3D(), output.Data());
 	if (output_cpu.GetError()) {
 		cerr << " Error: Copy memory failed in " << name << "!\n";
@@ -156,7 +156,7 @@ bool YoloModule::Detection() {
 	float reciprocal_w = 1.0f / input_width;
 	float reciprocal_h = 1.0f / input_height;
 	int size = output.Elements2D();
-	float threshold = GetAppConfig().GetThreshhold();	
+	float threshold = GetAppConfig().ThreshHold();
 	for (int y = 0,i = 0; y < output.Height(); y++) {
 		for (int x = 0; x < output.Width(); x++, i++) {
 			int best_n = -1;
@@ -168,9 +168,9 @@ bool YoloModule::Detection() {
 				if (confidence < threshold) {
 					continue;
 				}				
-				cout << "Found at n: " << n << ",x: " << x << ", y: " << y << ", confidence: " << confidence << endl;
+				
 				if (confidence < dr.confidence) {
-					cout << "Not of the best confidence, ignore...\n";
+					std::cout << "Not of the best confidence, ignore...\n";
 					continue;
 				}
 				int class_id = -1;
@@ -184,7 +184,7 @@ bool YoloModule::Detection() {
 					}
 				}
 				if (-1 == class_id) {
-					cout << "Class confidence below threshold, ignore...\n";
+					std::cout << "Class confidence below threshold, ignore...\n";
 					continue;
 				}				
 				best_n = n;
@@ -193,13 +193,14 @@ bool YoloModule::Detection() {
 				dr.confidence = confidence;
 				Box box =  get_yolo_box(output_cpu.ptr + box_index, masked_anchors[n],
 					x, y, reciprocal_w, reciprocal_h, size);
+				std::cout << " Found at grid [" << x << "," << y << "], anchor: " << n << ", prob: " << confidence
+					<<", position: (" << (int)(box.x * 416.0f)<< ","<< (int)(box.y * 416.0f) << ")\n";
 				dr.x = box.x;
 				dr.y = box.y;
 				dr.w = box.w;
 				dr.h = box.h; 
 			}
-			if (best_n > 0) {
-				cout << "the " << best_n << " anchor box gets the box.\n";
+			if (best_n > 0) { 
 				network->AddDetectionResult(dr);
 			}
 		}
@@ -264,19 +265,21 @@ bool YoloModule::Forward(ForwardContext& context) {
 
 	float* output_gpu = reinterpret_cast<float*>(output.Data());
  
-	bool ret = true;
-	cudnnHandle_t handle = GetCUDNNHandle();
+	bool ret = true; 
+	int total_cells = output_height * output_width;
+	int xy_elements = 2 * total_cells;
+	int conf_cls_elements = (1 + classes) * total_cells;
 	for (b = 0; b < output.Batch(); b++) {
 		for (n = 0; n < (int)masked_anchors.size(); n++) {
 			float* x = output_gpu + EntryIndex(n, 0, INDEX_PROBILITY_X);
-			if (!activate_array_ongpu(x,x, 2 * output.Elements2D(), output.DataType(), LOGISTIC)) {
+			if (!activate_array_ongpu(x,x, xy_elements, output.DataType(), LOGISTIC)) {
 				return false;
 			} 
-			x = output_gpu + EntryIndex( n, 0, INDEX_CONFIDENCE);
-			if (!activate_array_ongpu(x, x, (1 + classes) * output.Elements2D(), output.DataType(), LOGISTIC))
+			x += (INDEX_CONFIDENCE - INDEX_PROBILITY_X) * total_cells;
+			if (!activate_array_ongpu(x, x, conf_cls_elements, output.DataType(), LOGISTIC))
 				return false; 
 		}
-		output_gpu += output.Elements3D();
+		output_gpu += total_cells * output_channels;
 	} 
 	if (!context.training) {   
 		return Detection();
@@ -291,31 +294,29 @@ bool YoloModule::Forward(ForwardContext& context) {
 	float avg_obj = 0, avg_anyobj = 0;
 	int count = 0, class_count = 0;
 	float reciprocal_w = 1.0f / input.Width();
-	float reciprocal_h = 1.0f / output.Height();
-
-	int  max_boxes = context.max_truths_per_batch;
-	ObjectInfo* batch_truths = context.truths;
-	float* delta_cpu = New float[output.Elements3D()];
-	float* output_cpu = New float[output.Elements3D()]; 
-	unique_ptr<float> temp1(output_cpu), temp2(delta_cpu);
+	float reciprocal_h = 1.0f / input.Height();
+	CpuPtr<float> delta_cpu(output.Elements3D());
+	CpuPtr<float> output_cpu(output.Elements3D());
 
 	size_t batch_bytes = output.Elements3D() * sizeof(float);
 	int size = output.Elements2D();
-	for (int b = 0; b < output.Batch(); b++, batch_truths += max_boxes) {
-		output_gpu = reinterpret_cast<float*>(output.BatchData(b));
-		if (cudaSuccess != cudaMemcpy(output_cpu, output_gpu, batch_bytes, cudaMemcpyDeviceToHost)) { 
+	for (int b = 0; b < output.Batch(); b++) {
+		const LPObjectInfos truths = network->GetBatchTruths(b);
+		if (!truths) return false;
+		float* output_gpu = reinterpret_cast<float*>(output.BatchData(b));
+		if (cudaSuccess != cudaMemcpy(output_cpu, output_gpu, batch_bytes, cudaMemcpyDeviceToHost)) {
 			return false;
-		} 
-		memset(delta_cpu, 0, batch_bytes); 
-		DeltaBackground(output_cpu, delta_cpu, batch_truths, max_boxes, avg_anyobj);
-		for (int t = 0; t < max_boxes; t++) {
-			ObjectInfo& truth = batch_truths[t];
+		}
+		delta_cpu.Reset();
+		DeltaBackground(output_cpu, delta_cpu, *truths, avg_anyobj);
+		for (int t = 0; t < (int)truths->size(); t++) {
+			const ObjectInfo& truth = truths->at(t);
 			if (truth.class_id < 0) break;
 			float best_iou = 0;
 			int n, best_n = 0, mask_n = -1;
 			int x = (truth.x * output.Width());
 			int y = (truth.y * output.Height());
-			
+
 			Box truth_shift(0, 0, truth.w, truth.h);
 			float w, h;
 			for (n = 0; n < network->GetAnchorCount(); n++) {
@@ -335,7 +336,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 			}
 			if (mask_n >= 0) { // found matched anchor
 				int offset = y * output.Width() + x;
-				int box_index = EntryIndex( mask_n, offset, INDEX_PROBILITY_X);
+				int box_index = EntryIndex(mask_n, offset, INDEX_PROBILITY_X);
 				DeltaBox(output_cpu, delta_cpu, truth, masked_anchors[mask_n], box_index, x, y);
 
 				int object_index = box_index + (INDEX_CONFIDENCE - INDEX_PROBILITY_X) * size;
@@ -343,7 +344,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 				delta_cpu[object_index] = 1 - output_cpu[object_index];
 
 				int class_id = truth.class_id;//context.truths[t*(4 + 1) + b*l.truths + 4];
- 
+
 				int class_index = object_index + size /* *(INDEX_PROBILITY_CLASS_0 - INDEX_CONFIDENCE) */;
 				DeltaClass(output_cpu, delta_cpu, class_id, class_index, &avg_cat);
 
@@ -362,7 +363,7 @@ bool YoloModule::Forward(ForwardContext& context) {
 		if (shortcut_delta.DataType() == CUDNN_DATA_FLOAT) {
 			float* delta_gpu = reinterpret_cast<float*>(shortcut_delta.BatchData(b));
 			if (cudaSuccess != cudaMemcpy(delta_gpu, delta_cpu, batch_bytes, cudaMemcpyHostToDevice))
-				return false; 
+				return false;
 		}
 		else {
 			__half* delta_gpu = reinterpret_cast<__half*>(shortcut_delta.BatchData(b));
@@ -374,13 +375,13 @@ bool YoloModule::Forward(ForwardContext& context) {
 
 	}
 	loss /= network->MiniBatch();
-	network->RegisterLoss(loss);
+	network->RegisterTrainingResults(loss, 0, 0);
 
-	
-	 
+
+
 	ostringstream oss;
 	avg_anyobj /= output.Elements();
-	oss << " " << name  <<": Found " << count << " objects with layer loss: "<< loss  ;
+	oss << " " << name << ": Found " << count << " objects with layer loss: " << loss;
 	if (count > 0) {
 		avg_iou /= count;
 		avg_obj /= count;
@@ -396,13 +397,13 @@ bool YoloModule::Forward(ForwardContext& context) {
 		}
 		else {
 			oss << setprecision(4) << ".\n               IoU:" << avg_iou << ", Obj:" << avg_obj
-				<< ", No Obj:" << avg_anyobj << ", .5R:" << recall << "%, .75R:" << recall75  << "%." ;
+				<< ", No Obj:" << avg_anyobj << ", .5R:" << recall << "%, .75R:" << recall75 << "%.";
 
 
 		}
 	}
 
-	cout << oss.str() << endl << endl; 
+	std::cout << oss.str() << endl << endl;
 
 	return true;
 }
@@ -411,12 +412,14 @@ bool YoloModule::Backward(CudaTensor& delta) {
 	return shortcut_delta.Release();
 }
 
-bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, l_index)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"RegionYolo\">" << endl;
 	//<data />
 	//<data axis="1" classes="1" coords="4" do_softmax="0" end_axis="3" mask="0,1,2" num="9"/>
-	xml << "      <data axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  
+	string str;
+	network->GetAnchorsStr(str);
+	xml << "      <data anchors=\""<< str<< "\" axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  
 		mask_anchor_str <<"\" num=\""<< network->GetAnchorCount() <<"\" />" << endl;
 	WritePorts(xml);
 	xml << "    </layer>" << endl;

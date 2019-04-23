@@ -220,15 +220,19 @@ bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	return true;//delta.Release(); 
 }
 
-bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset) const {
+bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, int &l_index) const {
 	int n = prevs.size();
 	if (0 == n) {
 		edges << "    <edge from-layer=\"0\" from-port=\"0\" to-layer=\"" << index 
 			<< "\" to-port=\"0\"/>" << endl;
+	} 
+	if (n > 1) {
+		index = l_index + 1;
 	}
-	int output_index = index;
-	if (n > 1) output_index--;
-	for (int i = 0; i < n; i++) {
+	else {
+		index = l_index;
+	}
+	for (int i = 0; i < n; i++ ) {
 		InferenceModule* module = prevs[i];
 		int from_port = module->output_port;
 		int from_index = module->index;
@@ -244,11 +248,15 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 			from_index = module->index;
 		}
 		edges << "    <edge from-layer=\"" << from_index << "\" from-port=\"" << from_port <<
-			"\" to-layer=\"" << output_index << "\" to-port=\"" << i << "\"/>" << endl;
+			"\" to-layer=\"" << l_index << "\" to-port=\"" << i << "\"/>" << endl;
 	}
-	if (n < 2) return true;
+	
+	if (n < 2) {
+		l_index = index + 1;
+		return true;
+	}
 	string concat_name = name + ".concat";
-	xml << "    <layer id=\"" << output_index << "\" name=\"" << concat_name << "\" precision=\"" << Precision() << "\" type=\"Concat\">" << endl;
+	xml << "    <layer id=\"" << l_index << "\" name=\"" << concat_name << "\" precision=\"" << Precision() << "\" type=\"Concat\">" << endl;
 	xml << "      <data axis=\"1\"/>" << endl;
 	xml << "      <input>" << endl;
 	for (int i = 0; i < n; i++) {
@@ -270,8 +278,9 @@ bool InferenceModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream
 	xml << "        </port>" << endl;
 	xml << "      </output>" << endl;
 	xml << "    </layer>" << endl;
-	edges << "    <edge from-layer=\"" << output_index << "\" from-port=\"" << n <<
+	edges << "    <edge from-layer=\"" << l_index  << "\" from-port=\"" << n <<
 		"\" to-layer=\"" << index << "\" to-port=\"0\"/>" << endl;
+	l_index = index + 1;
 	return true;
 }
  
@@ -322,9 +331,9 @@ bool ActivationModule::Backward(CudaTensor & delta) {
 	//delta.Save(DEBUGGING_DIR "activation.after02.bin", 1);
 	return DistributeDeltas(delta);
 }
-bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
+bool ActivationModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const {
  
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, l_index)) return false;
 	string t;
 	switch (mode) {
 	case  LEAKY:
@@ -386,8 +395,8 @@ bool UpSampleModule::Backward(CudaTensor & delta) {
 	if (!temp.DownSample(delta, stride_w, stride_h)) return false; 
 	return DistributeDeltas(delta);
 }
-bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset)) return false;
+bool UpSampleModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset,int& l_index) const {
+	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, l_index)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Resample\">" << endl;
 	//<data />
 	xml << "      <data antialias=\"0\" factor=\""<< stride_w <<"\" type=\"caffe.ResampleParameter.NEAREST\" />" << endl;
