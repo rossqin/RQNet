@@ -9,6 +9,7 @@ struct ForwardContext;
 class Layer;
 class CNNNetwork;
 typedef map<string, InferenceModule*> ModulePool;
+class ShortcutModule;
 class InferenceModule {
 protected:
 	mutable int index;
@@ -20,21 +21,24 @@ protected:
 	int input_channels;
 	int output_channels; 
 	 
-	InferenceModule* logical_prev; 
+	InferenceModule* logical_prev, *logical_next;
 	Layer* layer;
 	CNNNetwork* network;
 	
 	vector<InferenceModule*> prevs;
-	void GetPrevModules(const XMLElement* element);	 
+	void GetPrevModules(const XMLElement* element, bool add_channels = true);	 
 	virtual bool Resize(int w, int h) = 0;
 	bool PrepareShortcutDelta();
 	void WritePorts(ofstream& xml) const;
+	char* cached_input ;
+	char* cached_output;
+	friend class ShortcutModule;
 public:
 	string name;
 	CudaTensor input, output;
 	CudaTensor shortcut_delta;
 	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
-	virtual ~InferenceModule() {};
+	virtual ~InferenceModule();
 	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev);
 	inline const char* Precision() const { return (input.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	inline int GetOutputChannels() const { return output_channels; }
@@ -45,12 +49,21 @@ public:
 	virtual bool DistributeDeltas(CudaTensor& delta);
 	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	virtual uint32_t GetFlops() const = 0;
+	bool CacheOutput();
 };
 class BatchNormModule;
 class ConvolutionalModule : public InferenceModule {
 protected:
+	CudaTensor* forward_input;
 	CudaTensor w;
 	CudaTensor dw;
+
+	//for adam
+	CudaTensor adam_m;
+	CudaTensor adam_v; 
+	CudaTensor adam_bias_m;
+	CudaTensor adam_bias_v;
+
 	//TODO: think about if not followed by batchnorm module.
 	CudaTensor bias;
 	CudaTensor dbias; 
@@ -62,6 +75,8 @@ protected:
 	int stride_h;
 	int dilation_w;
 	int dilation_h;
+
+	size_t workspace_size;
 	
 	cudnnFilterDescriptor_t w_desc;
 	cudnnConvolutionDescriptor_t conv_desc;
@@ -107,8 +122,16 @@ protected:
 	bool fused;
 	CudaTensor params; 
 	CudaTensor training_params;
+
+	CudaTensor adam_params; 
+	//CudaTensor adam_gamma_m;
+	//CudaTensor adam_gamma_v;
+	//CudaTensor adam_beta_m;
+	//CudaTensor adam_beta_v;
+
 	bool freezed;
 	cudnnTensorDescriptor_t t_desc; 
+	CudaTensor* forward_input;
 	bool Resize(int w, int h);
 public:
 
@@ -160,5 +183,34 @@ public:
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const { return false; }
+	uint32_t GetFlops() const { return 0; }
+};
+class ShortcutModule : public InferenceModule {
+protected:
+	bool Resize(int w, int h);
+public:
+	ShortcutModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	~ShortcutModule();
+	bool Forward(ForwardContext& context);
+	bool Backward(CudaTensor& delta);
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
+	uint32_t GetFlops() const { return 0; }
+};
+
+class SSDModule : public InferenceModule {
+protected:
+	bool focal_loss;
+	int classes;
+	float ignore_thresh;
+	float truth_thresh;
+	int  s_k;
+	vector<float> def_boxes;
+	bool Resize(int w, int h);
+public:
+	SSDModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	~SSDModule();
+	bool Forward(ForwardContext& context);
+	bool Backward(CudaTensor& delta);
+	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const { return 0; }
 };

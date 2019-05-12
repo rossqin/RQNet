@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "activation.h"
+#include "cuda_tensor.h"
 #include <cuda_fp16.h>
 
 __global__ static void activate_float_kernel(const float* in, float* out, int elements,
@@ -7,59 +8,62 @@ __global__ static void activate_float_kernel(const float* in, float* out, int el
 	float val;
 	int index = blockDim.x  * blockIdx.x + threadIdx.x;
 	int threads = gridDim.x * blockDim.x;
+ 
 	while (index < elements) {
+		val = in[index];
 		switch (mode) {
 		case LEAKY:
-			if (in[index] < 0.0)
-				out[index] = 0.1f * in[index];
+			if (val < 0.0f)
+				out[index] = 0.1f * val;
 			else
-				out[index] = in[index];
+				out[index] = val;
 			break;
 		case LOGISTIC:
-			out[index] = 1.0 / (1.0 + exp(-in[index]));
-
+			out[index] = 1.0f / (1.0f + exp(-val));
+			//if (index < 13)
+			//	printf("in: %f, out : %f\n", val, out[index]);
 			break;
 		case RELU:
-			if (in[index] < 0.0)
-				out[index] = 0.0;
+			if (val < 0.0f)
+				out[index] = 0.0f;
 			else
-				out[index] = in[index];
+				out[index] = val;
 			break;
 		case HARDTAN:
-			if (in[index] < -1.0)
-				out[index] = -1.0;
-			else if (in[index] > 1.0)
-				out[index] = 1.0;
+			if (val < -1.0)
+				out[index] = -1.0f;
+			else if (val > 1.0f)
+				out[index] = 1.0f;
 			else
-				out[index] = in[index];
+				out[index] = val;
 			break;
 		case LHTAN:
 
-			if (in[index] < 0.0f)
-				out[index] = in[index] * 0.001f;
-			else if (in[index] > 1.0f)
-				out[index] = 0.001f * (in[index] - 1.0f) + 1.0f;
+			if (val < 0.0f)
+				out[index] = val * 0.001f;
+			else if (val > 1.0f)
+				out[index] = 0.001f * (val - 1.0f) + 1.0f;
 			else
-				out[index] = in[index];
+				out[index] = val;
 
 			break;
 		case TANH:
-			val = exp(2.0f * in[index]);
+			val = exp(2.0f * val);
 			out[index] = (val - 1.0f) / (val + 1.0f);
 			break;
 		case LOGGY:
-			val = 2.0f / (1.0f + exp(-in[index]));
-			out[index] = 2.0f / (1.0f + exp(-in[index]));
+			val = 2.0f / (1.0f + exp(-val));
+			out[index] = 2.0f / (1.0f + exp(-val));
 			break;
 		case ELU:
-			if (in[index] < 0.0f)
-				out[index] = exp(in[index]) - 1.0f;
+			if (val < 0.0f)
+				out[index] = exp(val) - 1.0f;
 			else
-				out[index] = in[index];
+				out[index] = val;
 			break;
 
 		case LINEAR:
-			out[index] = in[index];
+			out[index] = val;
 			break;
 		default:
 			break;
@@ -187,6 +191,7 @@ __global__ static void gradient_float_kernel(const float* y, float* dy, int elem
 		index += threads;
 	}
 }
+#if 0
 __global__ static void gradient_half_kernel(const __half* y, __half* dy, int elements,
 	cudnnDataType_t data_type, ActivationMode mode) {
 	float val;
@@ -236,6 +241,7 @@ __global__ static void gradient_half_kernel(const __half* y, __half* dy, int ele
 		index += threads;
 	}
 }
+#endif
 bool gradient_array_ongpu(const void* y, void* delta, int elements, cudnnDataType_t data_type, ActivationMode mode) {
 	if (mode == LINEAR) return true;
 
@@ -246,20 +252,38 @@ bool gradient_array_ongpu(const void* y, void* delta, int elements, cudnnDataTyp
 		const float* in = reinterpret_cast<const float*>(y);
 		float* out = reinterpret_cast<float*>(delta);
 		gradient_float_kernel <<<g, b >>> (in, out, elements, data_type, mode);
-	}
+		cudaError_t err = cudaDeviceSynchronize();
+		if (err != cudaSuccess) {
+			cerr << "gradient_array_ongpu failed! elements:" << elements << ", err :" << (int)err << endl;
+			return false;
+		}
+	} 
 	else if (data_type == CUDNN_DATA_HALF) {
 		const __half* in = reinterpret_cast<const __half*>(y);
+		CudaPtr<float> fmt_buf(elements);
+		if (!f16_to_f32(fmt_buf, in, elements)) return false;
+		if (y == delta) {
+			gradient_float_kernel <<<g, b >>> (fmt_buf.ptr, fmt_buf.ptr, elements, data_type, mode);
+		}
+		else {
+			CudaPtr<float> fmt_buf2(elements);
+			if (cudaSuccess != cudaMemcpy(fmt_buf2.ptr, fmt_buf.ptr, fmt_buf.Bytes(), cudaMemcpyDeviceToDevice))
+				return false;
+			gradient_float_kernel << <g, b >> > (fmt_buf2.ptr, fmt_buf.ptr, elements, data_type, mode);
+		}
+		cudaError_t err = cudaDeviceSynchronize();
+		if (err != cudaSuccess) {
+			cerr << "gradient_array_ongpu failed! elements:" << elements << ", err :" << (int)err << endl;
+			return false;
+		}
 		__half* out = reinterpret_cast<__half*>(delta);
-		gradient_half_kernel <<<g, b >>> (in, out, elements, data_type, mode);
+		return f32_to_f16(out, fmt_buf.ptr, elements);
 	}
+ 
 	else {
 		return false;
 	}
-	cudaError_t err = cudaDeviceSynchronize();
-	if (err != cudaSuccess) {
-		cerr << "gradient_array_ongpu failed! elements:" << elements << ", err :" << (int)err << endl;
-		return false;
-	}
+	
 	return true;
 }
  

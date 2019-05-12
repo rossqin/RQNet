@@ -8,8 +8,7 @@ class CNNNetwork;
 struct ForwardContext {
 	bool training;
 	bool freezeConvParams;
-	bool freezeBNParams;
-	bool freezeActParams;  
+	bool freezeBNParams; 
 	CudaTensor* input;
 
 };

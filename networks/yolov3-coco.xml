@@ -1,0 +1,477 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0">
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+		<classes>80</classes>
+	</input>
+	<anchors>
+		<anchor width="10" height="13" />
+		<anchor width="16" height="30" />
+		<anchor width="33" height="23" />
+		<anchor width="30" height="61" />
+		<anchor width="62" height="45" />
+		<anchor width="59" height="119" />
+		<anchor width="116" height="90" />
+		<anchor width="156" height="198" />
+		<anchor width="373" height="326" />
+	</anchors>
+	<layers>
+		<layer id="layer01">
+			<module  type="conv"  id="convolution" filters="32" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="none"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer02">
+			<module  type="conv"  id="convolution" filters="64" filter-w="3" filter-h="3" stride-w="2"  stride-h="2" bias="false" before="layer01.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer03">
+			<module  type="conv"  id="convolution" filters="32" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer02.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer04">
+			<module  type="conv"  id="convolution" filters="64" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer03.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer05">
+			<module id="shortcut" type="shortcut" before="layer04.activation,layer02.activation" />
+		</layer>
+		<layer id="layer06">
+			<module  type="conv"  id="convolution" filters="128" filter-w="3" filter-h="3" stride-w="2"  stride-h="2" bias="false" before="layer05.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer07">
+			<module  type="conv"  id="convolution" filters="64" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer06.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer08">
+			<module  type="conv"  id="convolution" filters="128" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer07.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer09">
+			<module id="shortcut" type="shortcut" before="layer08.activation,layer06.activation" />
+		</layer>
+		<layer id="layer10">
+			<module  type="conv"  id="convolution" filters="64" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer09.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer11">
+			<module  type="conv"  id="convolution" filters="128" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer10.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer12">
+			<module id="shortcut" type="shortcut" before="layer11.activation,layer09.shortcut" />
+		</layer>
+		<layer id="layer13">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="2"  stride-h="2" bias="false" before="layer12.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer14">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer13.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer15">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer14.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer16">
+			<module id="shortcut" type="shortcut" before="layer15.activation,layer13.activation" />
+		</layer>
+		<layer id="layer17">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer16.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer18">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer17.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer19">
+			<module id="shortcut" type="shortcut" before="layer18.activation,layer16.shortcut" />
+		</layer>
+		<layer id="layer20">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer19.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer21">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer20.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer22">
+			<module id="shortcut" type="shortcut" before="layer21.activation,layer19.shortcut" />
+		</layer>
+		<layer id="layer23">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer22.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer24">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer23.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer25">
+			<module id="shortcut" type="shortcut" before="layer24.activation,layer22.shortcut" />
+		</layer>
+		<layer id="layer26">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer25.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer27">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer26.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer28">
+			<module id="shortcut" type="shortcut" before="layer27.activation,layer25.shortcut" />
+		</layer>
+		<layer id="layer29">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer28.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer30">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer29.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer31">
+			<module id="shortcut" type="shortcut" before="layer30.activation,layer28.shortcut" />
+		</layer>
+		<layer id="layer32">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer31.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer33">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer32.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer34">
+			<module id="shortcut" type="shortcut" before="layer33.activation,layer31.shortcut" />
+		</layer>
+		<layer id="layer35">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer34.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer36">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer35.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer37">
+			<module id="shortcut" type="shortcut" before="layer36.activation,layer34.shortcut" />
+		</layer>
+		<layer id="layer38">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="2"  stride-h="2" bias="false" before="layer37.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer39">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer38.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer40">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer39.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer41">
+			<module id="shortcut" type="shortcut" before="layer40.activation,layer38.activation" />
+		</layer>
+		<layer id="layer42">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer41.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer43">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer42.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer44">
+			<module id="shortcut" type="shortcut" before="layer43.activation,layer41.shortcut" />
+		</layer>
+		<layer id="layer45">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer44.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer46">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer45.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer47">
+			<module id="shortcut" type="shortcut" before="layer46.activation,layer44.shortcut" />
+		</layer>
+		<layer id="layer48">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer47.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer49">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer48.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer50">
+			<module id="shortcut" type="shortcut" before="layer49.activation,layer47.shortcut" />
+		</layer>
+		<layer id="layer51">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer50.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer52">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer51.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer53">
+			<module id="shortcut" type="shortcut" before="layer52.activation,layer50.shortcut" />
+		</layer>
+		<layer id="layer54">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer53.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer55">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer54.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer56">
+			<module id="shortcut" type="shortcut" before="layer55.activation,layer53.shortcut" />
+		</layer>
+		<layer id="layer57">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer56.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer58">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer57.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer59">
+			<module id="shortcut" type="shortcut" before="layer58.activation,layer56.shortcut" />
+		</layer>
+		<layer id="layer60">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer59.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer61">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer60.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer62">
+			<module id="shortcut" type="shortcut" before="layer61.activation,layer59.shortcut" />
+		</layer>
+		<layer id="layer63">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="2"  stride-h="2" bias="false" before="layer62.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer64">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer63.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer65">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer64.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer66">
+			<module id="shortcut" type="shortcut" before="layer65.activation,layer63.activation" />
+		</layer>
+		<layer id="layer67">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer66.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer68">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer67.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer69">
+			<module id="shortcut" type="shortcut" before="layer68.activation,layer66.shortcut" />
+		</layer>
+		<layer id="layer70">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer69.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer71">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer70.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer72">
+			<module id="shortcut" type="shortcut" before="layer71.activation,layer69.shortcut" />
+		</layer>
+		<layer id="layer73">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer72.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer74">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer73.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer75">
+			<module id="shortcut" type="shortcut" before="layer74.activation,layer72.shortcut" />
+		</layer>
+		<layer id="layer76">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer75.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer77">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer76.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer78">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer77.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer79">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer78.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer80">
+			<module  type="conv"  id="convolution" filters="512" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer79.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer81">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer80.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer82">
+			<module  type="conv"  id="convolution" filters="255" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer81.activation"/>
+		</layer>
+		<layer id="layer83">
+			<module id="yolo" type="yolo-detection" before="layer82.convolution" ignore-thresh="0.5" truth-thresh="0.7" anchor-masks="6,7,8" focal-loss="true" />
+		</layer>
+		<layer id="layer84">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer80.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer85">
+			<module id="upsample" type="upsample"  stride-w="2" stride-h="2"  before="layer84.activation" />
+		</layer>
+		<layer id="layer86">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer85.upsample,layer62.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer87">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer86.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer88">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer87.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer89">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer88.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer90">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer89.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer91">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer90.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer92">
+			<module  type="conv"  id="convolution" filters="255" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer91.activation"/>
+		</layer>
+		<layer id="layer93">
+			<module id="yolo" type="yolo-detection" before="layer92.convolution" ignore-thresh="0.5" truth-thresh="0.7" anchor-masks="3,4,5" focal-loss="true" />
+		</layer>
+		<layer id="layer94">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer90.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer95">
+			<module id="upsample" type="upsample"  stride-w="2" stride-h="2"  before="layer94.activation" />
+		</layer>
+		<layer id="layer96">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer95.upsample,layer37.shortcut"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer97">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer96.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer98">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer97.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer99">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer98.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer100">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer99.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer101">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer100.activation"/>
+			<module id="normalization" type="batch-norm" before="convolution" />
+			<module id="activation" type="activation" method="leaky" before="normalization" />
+		</layer>
+		<layer id="layer102">
+			<module  type="conv"  id="convolution" filters="255" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer101.activation"/>
+		</layer>
+		<layer id="layer103">
+			<module id="yolo" type="yolo-detection" before="layer102.convolution" ignore-thresh="0.5" truth-thresh="0.7" anchor-masks="0,1,2" focal-loss="true" />
+		</layer>
+	</layers>
+</net>

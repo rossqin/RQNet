@@ -1,6 +1,10 @@
 #include "stdafx.h"
 #include "cuda_tensor.h"
+#include "config.h"
+
 #include <cuda_fp16.h>
+
+#include <cuda_runtime_api.h>
 
 __global__ static void f32_to_f16_kernel(__half* dst, const float* src, size_t n) {
 	int threads = gridDim.x * blockDim.x;
@@ -457,37 +461,78 @@ bool CudaTensor::MulAdd(const CudaTensor& op_m, const CudaTensor& op_a) {
 	}
 	return true;
 }
-__global__ static void sgd_update_kernel(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, float decay, float momentum) {
-	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+__global__ static void adam_update_kernel(float* theta, float* gt, float* mt, float* vt, int elements, 
+int t, AdamConfig adam_config,float decay) {
+	int i = blockDim.x  * blockIdx.x + threadIdx.x;
 	int threads = gridDim.x * blockDim.x;
-	while (index < elements) {
-		if (data_type == CUDNN_DATA_FLOAT) {
-			float* dst = reinterpret_cast<float*>(params);
-			float* src = reinterpret_cast<float*>(updates);
-			src[index] -= (dst[index] * decay);
-			dst[index] += (lr * src[index]);
-			src[index] *= momentum;
+	float m_hat, v_hat;
+	while (i < elements) {
+		if (decay != 0.0f) {
+			gt[i] -= decay * theta[i];
 		}
-		else {
-			__half* dst = reinterpret_cast<__half*>(params);
-			__half* src = reinterpret_cast<__half*>(updates);
-			__half temp = __hmul(dst[index], __float2half(decay));
-			src[index] = __hsub(src[index],temp);
-			temp = __hmul(src[index], __float2half(lr));
-			dst[index] = __hsub(dst[index], temp);
-			src[index] = __hmul(src[index] , __float2half(momentum)); 
-		}
-		index += threads;
+		mt[i] *= adam_config.beta1;
+		mt[i] += (1.0f - adam_config.beta1) * gt[i];
+		vt[i] *= adam_config.beta2;
+		vt[i] += (1.0f - adam_config.beta2) * gt[i] * gt[i];
+
+		m_hat = mt[i] / (1.0f - powf(adam_config.beta1, t)); 
+		v_hat = vt[i] / (1.0f - powf(adam_config.beta2, t));
+		theta[i] = theta[i] - adam_config.alpha * m_hat / (sqrtf(v_hat) + adam_config.epsilon);
+ 
+		gt[i] = 0.0f;
+		i += threads;
+
 	}
+	
 }
-bool sgd_update(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, float decay, float momentum) {
+bool adam_update(float* theta, float* gt, float* mt, float* vt, int elements, int t, float lr , bool decay) {
+
+	AdamConfig adam_config = GetAppConfig().GetAdamConfig(); 
+	adam_config.alpha /= GetAppConfig().GetBatch();
 	int g = GPUGridSize();
 	int b = GPUBlockSize();
-	sgd_update_kernel<<<g, b >>>(params, updates, elements, data_type, lr, decay, momentum);
+	t++;
+	float fdecay = 0.0f;
+	if (decay) {
+		fdecay = GetAppConfig().Decay();
+	}
+	adam_update_kernel<<<g, b >>>(theta, gt, mt, vt, elements, t, adam_config, fdecay);
 
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {
-		cerr << "Error: FloatTensor4D.Add returned " << err << endl;
+		cerr << " Error: adam_update returned " << err << endl;
+		return false;
+	}
+	return true; 
+}
+
+__global__ static void sgd_update_kernel(float* weights, float* updates, int elements, float lr, float decay, float momentum) {
+	int index = blockDim.x  * blockIdx.x + threadIdx.x;
+	int threads = gridDim.x * blockDim.x;
+	while (index < elements) {
+		if (decay != 0.0f) updates[index] -= (weights[index] * decay);
+		weights[index] += (lr * updates[index]);
+		updates[index] *= momentum;
+		 
+		index += threads;
+	}
+}
+
+
+bool sgd_update(float* weights, float* updates, int elements, float lr, bool decay) {
+	int g = GPUGridSize();
+	int b = GPUBlockSize();
+	const SgdConfig& sgd_config = GetAppConfig().GetSgdConfig();
+	float fdecay = 0.0f;
+	if (decay) {
+		fdecay = GetAppConfig().Decay();
+	}
+
+	sgd_update_kernel<<<g, b >>>(weights, updates, elements, lr, fdecay, sgd_config.momentum);
+
+	cudaError_t err = cudaDeviceSynchronize();
+	if (cudaSuccess != err) {
+		cerr << " Error: sgd_update returned " << err << endl;
 		return false;
 	}
 	return true;
@@ -498,52 +543,32 @@ void* gamma = params.BatchData(1);
 void* running_mu = params.BatchData(2);
 void* running_var = params.BatchData(3);
 */
-__global__ static void fuse_batchnorm_kernel(void* filters, void* bias, void* batchnorm_params, int output_channels, int filter_size, cudnnDataType_t data_type) {
+__global__ static void fuse_batchnorm_kernel(float* filters, float* bias, float* beta, int output_channels, int filter_size) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x; 
+	int threads = blockDim.x * gridDim.x;
  
-	while (index < output_channels) {
-		if (data_type == CUDNN_DATA_FLOAT) {
-			float* filters_f = reinterpret_cast<float*>(filters);
-			float* bias_f = reinterpret_cast<float*>(bias);
-			float* beta = reinterpret_cast<float*>(batchnorm_params);
-			float* gamma = beta + output_channels;
-			float* mu = gamma + output_channels;
-			float* var = mu + output_channels;
-			float temp = gamma[index] / sqrt(var[index] + 1.0e-5);
-			//float alpha = temp / size;
-			bias_f[index] += (beta[index] - mu[index] * temp); 
-			int f_i = index * filter_size;
-			for (int i = 0; i < filter_size; i++, f_i++) {
-				filters_f[f_i] *= temp; 
-			} 
-		}
-		else {
-			__half* filters_h = reinterpret_cast<__half*>(filters);
-			__half* bias_h = reinterpret_cast<__half*>(bias);
-			__half* beta = reinterpret_cast<__half*>(batchnorm_params);
-			__half* gamma = beta + output_channels;
-			__half* mu = gamma + output_channels;
-			__half* var = mu + output_channels;
+	while (index < output_channels) {		 
+		float* gamma = beta + output_channels;
+		float* mu = gamma + output_channels;
+		float* var = mu + output_channels;
+		float temp = gamma[index] / sqrt(var[index] + 1.0e-5);
+		//float alpha = temp / size;
+		bias[index] += (beta[index] - mu[index] * temp); 
+		int f_i = index * filter_size;
+		for (int i = 0; i < filter_size; i++, f_i++) {
+			filters[f_i] *= temp; 
+		}  
 
-			__half temp = __hdiv(gamma[index], hsqrt( __hadd(var[index] , __float2half(1.0e-5))));
-		 
-			bias_h[index] = __hadd(bias_h[index],(beta[index] - mu[index] * temp));
-			int f_i = index * filter_size;
-			for (int i = 0; i < filter_size; i++, f_i++) {
-				filters_h[f_i] = __hmul(filters_h[f_i], temp); 
-			}
-		}
-
-		index += blockDim.x * gridDim.x;
+		index += threads;
 	}
 
 
 }
-bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, int output_channels, int filter_size, cudnnDataType_t data_type) {
+bool fuse_batchnorm(float* filters, float* bias, float* beta, int output_channels, int filter_size ) {
 	int b = GPUBlockSize();
 	int g = output_channels / b;
 	if (output_channels % b) g++;
-	fuse_batchnorm_kernel<<<g, b >>>(filters, bias, batchnorm_params, output_channels, filter_size, data_type);
+	fuse_batchnorm_kernel<<<g, b >>>(filters, bias, beta, output_channels, filter_size );
 
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {

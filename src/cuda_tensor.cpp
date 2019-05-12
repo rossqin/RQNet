@@ -72,7 +72,7 @@ bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 		cudaError_t err = cudaFree(gpu_data);
 		gpu_data = nullptr;
 		if (err != cudaSuccess) {
-			cerr << "cudaFree at 0x" << hex << setw(10) << setfill('0') << (size_t)gpu_data << " return " << (int)err << endl;
+			cerr << " Error: cudaFree at 0x" << hex << setw(10) << setfill('0') << (size_t)gpu_data << " return " << (int)err << endl;
 		}
 	}
 	if (nullptr == desc) {
@@ -88,8 +88,8 @@ bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 	bytes =  elements * byte_per_element;
 	bad_flag = true;
 	cudaError_t err = cudaMalloc(&gpu_data, bytes);
-	if (err != cudaSuccess) {
-		cout << "Error: Try to allocate " << bytes << " bytes of GPU memory failed in FloatTensor4D.constructor! Error code : " << err << endl;
+	if (err != cudaSuccess) { 
+		cerr << " Error: Try to allocate " << bytes << " bytes of GPU memory failed in CudaTensor.Init! Error code : " << err << endl;
 		elements = 0;
 		return false;
 	}
@@ -174,9 +174,9 @@ bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
 		stored_w = header.dims[3];
 	}
 	else {
-		stored_h = header.dims[1];
-		stored_w = header.dims[2];
-		stored_c = header.dims[3];
+		stored_h = header.dims[2];
+		stored_w = header.dims[3];
+		stored_c = header.dims[1];
 	} 
 	int stored_elements = stored_b * stored_c * stored_h * stored_w;
 	CudaPtr<char> temp(header.bytes , cpu_data);	
@@ -194,6 +194,17 @@ bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
 	else {
 		if (data_type == stored_t) {
 			if(cudaSuccess != cudaMemcpy(gpu_data, temp, header.bytes, cudaMemcpyDeviceToDevice)) return false;
+			if (stored_w == w && stored_h == h) {
+				int left = bytes - header.bytes;
+				char* dst = reinterpret_cast<char*>(gpu_data) + header.bytes;
+				while (left > 0) {
+					int to_copy = min((int)header.bytes, left);
+					if (cudaSuccess != cudaMemcpy(dst, temp, to_copy, cudaMemcpyDeviceToDevice)) return false;
+					dst += to_copy;
+					left -= to_copy;
+				}
+				return true;
+			}
 		}
 		else if (data_type == CUDNN_DATA_HALF) {
 			if(!f32_to_f16(reinterpret_cast<__half*>(gpu_data), reinterpret_cast<float*>(temp.ptr), stored_elements))
@@ -204,9 +215,9 @@ bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
 				return false;
 		}
 		int left = elements - stored_elements;
-		unique_ptr<float> ptr(New float[left]);
-		float* buffer = ptr.get();
-		for (int i = 0; i < elements; i++) {
+		CpuPtr<float> ptr(left); 
+		float* buffer = ptr.ptr;
+		for (int i = 0; i < left; i++) {
 			buffer[i] = rand_uniform_strong(-0.5, 0.5);
 		}
 		if (data_type == CUDNN_DATA_FLOAT) {
@@ -397,4 +408,33 @@ bool CudaTensor::DisplayInFile(const char * filename, int batch) {
 	}
 	f.close();
 	return false;
+}
+
+bool CudaTensor::Cache(char *& cpu_data) {
+	if (!gpu_data || 0 == bytes) return false;
+	if (cpu_data) {
+		cpu_data = (char*)realloc(cpu_data, bytes);
+	}
+	else
+		cpu_data = New char[bytes]; 
+	if (cudaSuccess != cudaMemcpy(cpu_data, gpu_data, bytes, cudaMemcpyDeviceToHost)) {
+		return false;
+	}
+	bool b = cudaSuccess == cudaFree(gpu_data);
+	if(b)
+		gpu_data = nullptr;
+	return b;
+}
+
+bool CudaTensor::Restore(char *& cpu_data) {
+	if (gpu_data || 0 == bytes) return false;
+	if (cudaSuccess != cudaMalloc(&gpu_data, bytes))
+		return false;
+	cudaError_t e = cudaMemcpy(gpu_data, cpu_data, bytes, cudaMemcpyHostToDevice);
+	if (cudaSuccess != e) {
+		return false;
+	} 
+	delete[]cpu_data;
+	cpu_data = nullptr;
+	return true;
 }

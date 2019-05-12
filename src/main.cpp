@@ -17,7 +17,8 @@ static const char* get_file_name(const char* path) {
 	return path;
 }
  
-bool network_train(const char* data_definition, const char*  network_definition, const char* weights_path) {
+bool network_train(const char* data_definition, const char*  network_definition, 
+	const char* weights_path, bool restart) {
 
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 	
@@ -26,22 +27,26 @@ bool network_train(const char* data_definition, const char*  network_definition,
 		return false;
 	}
 	cout << " Done!\n Loading network configuration `" << network_definition << "` ... ";
-	if (!GetNetwork().Load(network_definition)) {
+	CNNNetwork network;
+	if (!network.Load(network_definition)) {
 		cout << " Failed! \n";
 		cerr << "Load network file `" << network_definition << "` failed!\n";
 		return false;
 	}
 	cout << " Done !\n Loading parameters from `" << weights_path << "`... ";
 	
-	if (!GetParamPool().Load(weights_path)) {
+	if (*weights_path && !network.weights_pool.Load(weights_path)) {
 		cout << " Failed! \n";
 		cerr << "Load network file `" << weights_path << "` failed!\n";
-		
-		return false;
+	}
+	if (GetAppConfig().UpdatePolicy() == Adam) {
+		string adam_weights_path(weights_path);
+		replace_extension(adam_weights_path, ".adam.rweights");
+		network.adam_weights_pool.Load(adam_weights_path.c_str());
 	}
 	cout << " Done !\n";
 	if (!cuDNNInitialize()) return false;
-	if (!GetNetwork().Train()) {
+	if (!network.Train(restart)) {
 		cerr << "Train failed!\n";
 		cuDNNFinalize();
 		return false;
@@ -53,13 +58,14 @@ bool network_train(const char* data_definition, const char*  network_definition,
 bool network_test(const char* data_definition, const char*  network_definition, const char* weights_path) {
 	return false;
 }
-bool detect_image(const char* data_definition, const char*  network_definition, const char* weights_path, const char* image_file, const char* data_type) {
+bool detect_image(const char* data_definition, const char*  network_definition,
+	const char* weights_path, const char* image_file, const char* data_type, float threds_hold , const char* output_file) {
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 
-	if (!GetAppConfig().Load(data_definition,2)) {
+	/*if (!GetAppConfig().Load(data_definition,2)) {
 		cerr << "Load configuration file `" << data_definition << "` failed!\n";
 		return false;
-	}
+	}*/
 	cout << " Done!\n Loading network configuration `" << network_definition << "` ... "; 
 	cudnnDataType_t t = CUDNN_DATA_DOUBLE;
 	if (data_type && *data_type) {
@@ -72,14 +78,15 @@ bool detect_image(const char* data_definition, const char*  network_definition, 
 			cerr << " Warning: unrecognized data type `" << data_type << "`!\n";
 		}		
 	} 
-	if (!GetNetwork().Load(network_definition,t)) {
+	CNNNetwork network;
+	if (!network.Load(network_definition,t)) {
 		cout << " Failed! \n";
 		cerr << "Load network file `" << network_definition << "` failed!\n";
 		return false;
 	} 
 	cout << " Done !\n Loading parameters from `" << weights_path << "... ";
 
-	if (!GetParamPool().Load(weights_path)) {
+	if (!network.weights_pool.Load(weights_path)) {
 		cout << " Failed! \n";
 		cerr << "Load network file `" << weights_path << "` failed!\n";
 
@@ -87,7 +94,7 @@ bool detect_image(const char* data_definition, const char*  network_definition, 
 	}
 	cout << " Done !\n";
 	if (!cuDNNInitialize()) return false;
-	bool ret = GetNetwork().Detect(image_file);
+	bool ret = network.Detect(image_file, threds_hold, output_file);
 	cuDNNFinalize();
 	return ret;
 }
@@ -121,11 +128,12 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 			return false;
 		}
 	}
-	if (!GetNetwork().Load(network_definition, t)) {
+	CNNNetwork network;
+	if (!network.Load(network_definition, t)) {
 		cerr << "Error: Cannot load network definition file " << network_definition << endl;
 		return false;
 	}
-	if (!GetParamPool().Load(weights_path)) {
+	if (!network.weights_pool.Load(weights_path)) {
 		cerr << "Error: Cannot load weights file " << weights_path << endl;
 		return false;
 	}
@@ -135,7 +143,7 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 		replace_extension(s_name, ".ir");
 	}
 	int l_index = 1;
-	if (!GetNetwork().OutputIRModel(dir, s_name, l_index)) {
+	if (!network.OutputIRModel(dir, s_name, l_index)) {
 		cerr << "Error: Create Failed!\n";
 		return false;
 	}
@@ -152,16 +160,19 @@ const char darknet_message[] = "Required. path to darket cfg file.\n";
 struct ArgDef {
 	const char* prefix;
 	const char* param;
+	bool exists;
 	const char* hint;
 };
 ArgDef defs[] = {
-	{ "-d", "config.xml", data_def_message },
-	{ "-n", "", network_def_message },
-	{ "-w", "", weights_message },
-	{ "-i", "", input_message },
-	{ "-o", "", output_message },
-	{ "-c","", darknet_message },
-	{ "-t","", "data type: FP32 or FP16"}
+	{ "-d", "config.xml", false, data_def_message },
+	{ "-n", "", false, network_def_message },
+	{ "-w", "", false, weights_message },
+	{ "-i", "", false, input_message },
+	{ "-o", "", false, output_message },
+	{ "-c","",  false, darknet_message },
+	{ "-t","", false, "data type: FP32 or FP16"},
+	{ "-restart", "false",false, ""},
+	{ "-threshold","0.7",false,""}
 }; 
 
 static void parse_cmd_line(int argc, char* argv[]) {
@@ -170,6 +181,7 @@ static void parse_cmd_line(int argc, char* argv[]) {
 	while(i < argc ){ 
 		for (int j = 0; j < arg_def_cnt; j++) {
 			if (strcmp(argv[i], defs[j].prefix) == 0) {
+				defs[j].exists = true;
 				if (++i < argc) {
 					defs[j].param = argv[i];
 				}
@@ -184,6 +196,13 @@ int main(int argc, char* argv[]) {
 #ifdef _DEBUG
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 #endif	 
+	/*float tests[10];
+	float pred = 0.0;
+	for (int i = 0; i < 10; i++) {
+		pred += 0.1f;
+		tests[i] = (1.0f - pred) * focal_loss_delta(pred,0.5f, 2.0f);
+		
+	} */
 	cudaError_t err = cudaGetDeviceCount(&gpu_device_cnt);
 	cout << " " << gpu_device_cnt << " GPU detected." << endl << endl;
 	if (argc < 3) {
@@ -219,24 +238,27 @@ int main(int argc, char* argv[]) {
 	const char* FLAGS_i = defs[3].param;
 	const char* FLAGS_o = defs[4].param;
 	const char* FLAGS_c = defs[5].param;
-	const char* FLAGS_t = defs[6].param;
+	const char* FLAGS_t = defs[6].param; 
 
 	bool ret = false;
 	
+	
 	if (strcmp(command, "train") == 0) {
-		ret = network_train(FLAGS_d, FLAGS_n, FLAGS_w);
+		ret = network_train(FLAGS_d, FLAGS_n, FLAGS_w, defs[7].exists || defs[7].param == "true");
 	}
 	else if (strcmp(command, "test") == 0) {
 		ret = network_test(FLAGS_d, FLAGS_n, FLAGS_w);
 	}
 	else if (strcmp(command, "detect") == 0) {
-		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t);
+		float t = defs[8].exists ?  atof(defs[8].param) : 0.7;
+		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t , t , FLAGS_o);
 	}
 	else if (strcmp(command, "demo") == 0) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);
 	}
 	else if (strcmp(command, "wconv") == 0) {
-		ret = GetParamPool().TransformDarknetWeights(FLAGS_c, FLAGS_w, FLAGS_o); 
+		CNNNetwork network;
+		ret = network.weights_pool.TransformDarknetWeights(FLAGS_c, FLAGS_w, FLAGS_o); 
 	}
 	else if (strcmp(command, "openvino") == 0) {
 		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_d, FLAGS_o, FLAGS_t);

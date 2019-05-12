@@ -92,26 +92,26 @@ float rand_uniform_strong(float min_, float max_) {
 	}
 	return (random_float() * (max_ - min_)) + min_;
 }
-static char time_str_buf[32];
-const char* get_time_str() {
+static char time_str_buf[64];
+const char* get_time_str(bool standard) {
 	time_t n = time(nullptr);
 	tm ti;
 	localtime_s(&ti, &n);
-	sprintf_s(time_str_buf, 32, "%04d%02d%02d%02d%02d%02d",
-		ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday,
-		ti.tm_hour, ti.tm_min, ti.tm_sec);
+	const char* fmt = standard ? "%04d-%02d-%02d %02d:%02d:%02d" : "%04d%02d%02d%02d%02d%02d";
+	sprintf(time_str_buf, fmt, ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday, ti.tm_hour, ti.tm_min, ti.tm_sec);
 	return time_str_buf;
 }
+
 static char path[300];
 const char* make_path(const char* dir, const char* base, const char* ext) {
 	sprintf_s(path, 300, "%s\\%s%s", dir, base, ext);
 	return path;
 }
-float get_next_float(const char*& str) {
+double get_next_float(const char*& str) {
 	const char* p = str;
 	while (*p != ',' && *p != ' '&& *p != '\t' && *p != 0)
 		p++;
-	float r = (float)atof(str);
+	double r = atof(str);
 	if (0 == *p)
 		str = p;
 	else {
@@ -271,4 +271,41 @@ void upper(string& str) {
 		if (str[i] >= 'a' && str[i] < 'z')
 			str[i] += ('A' - 'a');
 	}
+}
+const char* file_part(const string& path) {	 
+	size_t last_pos = 0;
+	for (int i = (int)path.length() - 1; i >= 0; i--) {
+		if (path[i] == '/' || path[i] == '\\') {
+			return path.c_str() + i + 1;
+		}
+	}
+	return path.c_str();
+}
+
+
+const char* rotate_to_str(RotateType rt) {
+	switch (rt)
+	{
+	case ToLeft:
+		return "rleft";
+	case ToRight:
+		return "rright";
+	case HorizFlip:
+		return "hflip";
+	case VertiFlip:
+		return "vflip";
+	case Rotate180:
+		return "rot180";
+	default:
+		return "original";
+	}
+}
+
+float focal_loss_delta(float pred, float alpha, float gamma) {
+ 
+	float pt = fmaxf(pred, 0.0000001);
+	//float grad = alpha * (gamma * (pred - 1.0f) * logf(pt)* pred + (1.0f - pred)*(1.0f - pred));
+	float grad = alpha * (pt - 1.0f) *(gamma * pt * logf(pt) + pt - 1.0f); //
+	//float focal_grad = alpha * (pred - 1.0f) * (gamma * pred * logf(pred) + pred - 1.0f);
+	return grad;
 }

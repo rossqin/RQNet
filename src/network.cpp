@@ -6,30 +6,28 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp>
 #include "image.h"
-#include "box.h"
-CNNNetwork network;
-CNNNetwork& GetNetwork() {
-	return network;
-}
-
-ModulePool& GetModulePool() {
-	return network.module_pool;
-}
+#include "box.h" 
+#include <direct.h>
+ 
 CNNNetwork::CNNNetwork() {
 	data_type = CUDNN_DATA_FLOAT; 
 	data_format = CUDNN_TENSOR_NCHW;
-	workspace = nullptr;
-	workspace_size = 0;
+	//workspace = nullptr;
+	//workspace_size = 0;
 	def_actvation = "leaky";
 	truths = nullptr;
 	input = nullptr;
+	cur_iteration = 0;
+	detection_layers = 2;
+	current_training_rotates = nullptr;
+	 
 }
 
 CNNNetwork::~CNNNetwork() {
 	for (auto l : layers) {
 		delete l;
 	}
-	if (workspace) cudaFree(workspace);
+//	if (workspace) cudaFree(workspace);
 	for (auto m = module_pool.begin(); m != module_pool.end(); m++) {
 		delete m->second;
 	} 
@@ -40,6 +38,7 @@ CNNNetwork::~CNNNetwork() {
 		delete[]truths;
 	}
 	if (input) delete[] input;
+	if (current_training_rotates) delete[]current_training_rotates;
 }
 static cudnnDataType_t get_data_type(const string& str) {
 	if (str == "FP32") {
@@ -57,10 +56,25 @@ static cudnnDataType_t get_data_type(const string& str) {
 void CNNNetwork::AddDetectionResult(const DetectionResult & data) {
 	int index = (int)detections.size() - 1; 
 	Box box(data.x, data.y, data.w, data.h );
+	int new_x = (int)(data.x * input_width);
+	int new_y = (int)(data.y * input_height);
+
+	int old_x, old_y;
+	float threshold = 0.5f;// GetAppConfig().NMSThreshold();
 	while (index >= 0) {
 		DetectionResult &dr = detections[index];
 		Box box2(dr.x, dr.y, dr.w, dr.h);
-		if (BoxIoU(box, box2) > 0.7f) {
+		old_x = (int)(dr.x * input_width);
+		old_y = (int)(dr.y * input_height);
+		if (((new_x - old_x) * (new_x - old_x) + (new_y - old_y) * (new_y - old_y)) < 144) {
+			if (data.confidence < dr.confidence) {
+				return;
+			}
+			dr = data;
+			return;
+		}
+		float iou = BoxIoU(box, box2);
+		if (iou > threshold) {
 			if (data.confidence < dr.confidence) {
 				return;
 			}
@@ -81,6 +95,19 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	XMLElement* root = doc.RootElement();
 	if (!root) return false;
 	root->QueryText("def-activation", def_actvation); 
+	const char* temp = root->Attribute("name");
+	if (temp) {		
+		name = temp;
+	}
+	else {
+		name = file_part(filename);
+		replace_extension(name, "");
+	}
+	struct stat s = { 0 };
+	stat(name.c_str(), &s);
+	if (0 == (s.st_mode & S_IFDIR)) {
+		_mkdir(name.c_str());
+	}
 	XMLElement* inputElement = root->FirstChildElement("input");
 	if (inputElement) {
 		string str;
@@ -112,17 +139,85 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		input_height = 416;
 		inputElement->QueryIntText("channels", input_channels);
 		inputElement->QueryIntText("width", input_width);
-		inputElement->QueryIntText("height", input_height);
+		inputElement->QueryIntText("height", input_height); 
 		input = New float[mini_batch * input_channels * input_width * input_height];
 	}
-	XMLElement* anchorElement = root->FirstChildElement("anchors/anchor");
-	while (anchorElement) {
-		float w = anchorElement->FloatAttribute("width", 0.0f) / 416.0f;
-		float h = anchorElement->FloatAttribute("height", 0.0f) / 416.0f;
-		if (w > 0.0 && h > 0.0) {			
-			anchors.push_back(pair<float, float>(w, h ));
+	XMLElement* classElement = root->FirstChildElement("classes/class");
+	while (classElement) {
+		const char* class_name = classElement->GetText();
+		if (!class_name) class_name = "<NONAME>";
+		classes.push_back(class_name);
+		classElement = classElement->NextSiblingElement();
+	}
+	if (classes.size() == 0) {
+		cerr << " Error: class count should > 0 !\n";
+		return false;
+	}
+	XMLElement* anchorElement = root->FirstChildElement("anchors");
+	const char* anchor_style = anchorElement->Attribute("style");
+	if (!anchor_style || strcmp(anchor_style, "ssd")) {
+		anchorElement = anchorElement->FirstChildElement("anchor");
+		if (anchorElement) {
+			while (anchorElement) {
+				float w = anchorElement->FloatAttribute("width", 0.0f) / 416.0f;
+				float h = anchorElement->FloatAttribute("height", 0.0f) / 416.0f;
+				if (w > 0.0 && h > 0.0) {
+					anchors.push_back(pair<float, float>(w, h));
+				}
+				anchorElement = anchorElement->NextSiblingElement();
+			}
 		}
-		anchorElement = anchorElement->NextSiblingElement();
+	}
+	else {	
+
+			float s_min = 0.2, s_max = 0.9;
+			int scales_count = 6;
+			bool add_default_scale = true;
+			vector<float> aspect_ratios;
+			anchorElement->QueryFloatText("scale-min",s_min);
+			anchorElement->QueryFloatText("scale-max", s_max);
+			anchorElement->QueryIntText("detection-layers", detection_layers);
+			anchorElement->QueryIntText("default-box-scales", scales_count);
+			switch (scales_count) {
+			case 6:
+				aspect_ratios = { 1.0f, 2.0f, 3.0f, 1.0f/3.0f, 0.5f };
+				break;
+			case 4:
+				aspect_ratios = { 1.0f, 2.0f, 0.5f };
+				break;
+			case 5:
+				add_default_scale = false;
+				aspect_ratios = { 1.0f, 2.0f, 3.0f, 1.0f / 3.0f, 0.5f };
+				break;
+			case 3:
+				add_default_scale = false;
+				aspect_ratios = { 1.0f, 2.0f, 0.5f };
+			default:
+				cerr << " Error: default-box-scales must be one in 3,4,5,6!\n";
+				return false;
+			}
+			if (detection_layers <= 1) {
+				cerr << " Error: detection-layers must bigger than 1!\n";
+				return false;
+			}
+			vector<float> sks;
+			for (int l = 0; l <= detection_layers; l++) {
+				sks.push_back(s_min + l *(s_max - s_min) / (detection_layers - 1));
+			}
+			float w, h,t;
+			for (int i = 0; i < detection_layers; i++) {
+				if (add_default_scale) {
+					w = sqrtf(sks[i] * sks[i + 1]);
+					anchors.push_back(pair<float, float>(w, w));
+				}
+				for (int j = 0; j < (int)aspect_ratios.size(); j++) {
+					t = sqrtf(aspect_ratios[j]);
+					w = sks[i] * t;
+					h = sks[i] / t;
+					anchors.push_back(pair<float, float>(w, h));
+				}
+			} 
+
 	}
 	XMLElement* layerElement = root->FirstChildElement("layers/layer");
 	int index = 0;
@@ -151,20 +246,10 @@ bool CNNNetwork::GetAnchor(int index, float & width, float & height) {
 	return true;
 }
 
-bool CNNNetwork::UpdateWorkspace(size_t new_size) {
-	if (new_size > workspace_size) {
-		workspace_size = new_size;
-		cudaFree(workspace);
-		workspace = nullptr;
-		return cudaSuccess == cudaMalloc(&workspace, workspace_size);
-	}
-	return true;
-}
 bool CNNNetwork::Forward(bool training) {
 	ForwardContext context = { training,
 		GetAppConfig().ConvParamsFreezed(),
 		GetAppConfig().BNParamsFreezed(),
-		GetAppConfig().ActParamsFreezed(),
 		nullptr
 	};
 	for (int i = 0; i < (int)layers.size(); i++) {
@@ -188,72 +273,97 @@ bool CNNNetwork::Backward() {
 	return true;
 }
 
-bool CNNNetwork::Train() { 
+bool CNNNetwork::Train(bool restart ) { 
 	DataLoader loader;
 
 	string filename("loss_");
 	filename += get_time_str();
-	filename += ",log";
-
-	uint32_t it;
-	if (GetAppConfig().FromFirstIteration())
-		it = 0;
+	filename += ".log"; 
+	 
+	if (restart)
+		cur_iteration = 0;
 	else
-		it = GetParamPool().GetIteration();
+		cur_iteration =  weights_pool.GetIteration();
 
-	cout << "\n *** Start training from iteration " << (it + 1) << "...\n\n";
+	int total_images = cur_iteration * GetAppConfig().GetBatch();
+
+	cout << "\n *** Start training from iteration " << (cur_iteration + 1) << "...\n\n";
 	int new_width, new_height;
 	string weights_file;
 	float avg_loss = -1.0;  
+	
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
-	 
-	while (!GetAppConfig().IsLastIteration(it)) {
+	if(!current_training_rotates) current_training_rotates = New RotateType[mini_batch + 1];
+
+ 
+	while (!GetAppConfig().IsLastIteration(cur_iteration)) {
 		loss = 0.0f;
 		training_batch = 0;
-		true_positives = 0.0f;
-		false_negatives = 0.0f;
-		it++;
-		clock_t start_clk = clock(); 		
-		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++) { 
+		true_positives = 0;
+		false_positives = 0;
+		cur_iteration++;
+		clock_t start_clk = clock(); 
+		int total_objects = 0;
+		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++, total_images += mini_batch) {
 			
-
+			current_training_files.clear();
 			//cout << "\nSubdivision " << i << ": loading data ... ";
 			long t = GetTickCount(); 
 			memset(input, 0,  input_len);
-			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height)) {
+			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height, (int)classes.size(), 
+				&current_training_files, current_training_rotates)) {
 				return false;
-			} 
-				
+			}  
+			for (int i = 0; i < mini_batch; i++) {
+				total_objects += truths[i]->size();
+			}
 			if (!Forward(true)) return false; 
+			cout << endl;
 			if (!Backward()) return false;   
 		}
 		
 		loss /= training_batch;
-		true_positives /= training_batch;
-		false_negatives /= training_batch;
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
 			avg_loss = avg_loss * 0.9 + loss * 0.1;
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
-		float lr = GetAppConfig().GetCurrentLearningRate(it);
-		cout << "\n >> It " << it << " | Loss: " << loss <<", Avg-Loss: "<< avg_loss 
-			<<", TP: "<< true_positives <<"%, FN: "<< false_negatives  <<"%, Learn-Rate: " << lr << ", Time: " << (ms * 0.001) << "s, Images: "
-			<< it * GetAppConfig().GetBatch() << ".\n\n";
+		int total_recalls = false_positives + true_positives;
+		if (0 == total_recalls) total_recalls = 1;
+		float lr = GetAppConfig().GetCurrentLearningRate(cur_iteration);
+		 
+		float rc = true_positives * 100.0f / total_objects;
+		float pr = true_positives * 100.0f / total_recalls;
+		float ap = rc * pr * 0.01f;
+		char info[300];
+		sprintf(info, "\n >> It %05d | Loss: %.4f, Avg-Loss: %.4f, Recall: %.2f%%, Precision: %.2f%%, ", cur_iteration,
+			loss, avg_loss, rc, pr);
+		cout <<info <<"Rate: " << lr << ", " << (ms * 0.001) << "s, total " << total_images << " images.\n\n";
 		 
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
-			ofs << setw(10) << it << ", " << input_width  << ", " << input_height  << ", " << setw(10) << lr << ", " << setw(10) << loss << ", " << setw(10) << avg_loss << endl;
+			//sprintf(info, "")
+			ofs << cur_iteration << ",\t" << input_width  << ",\t" << input_height  << ",\t" <<  lr << ",\t"
+				<< fixed << setprecision(2) << loss << ",\t"  << avg_loss << ",\t" << rc << ",\t" << pr << ",\t" << ap << endl;
 			ofs.close();
 		}
 		
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
 		} 
-		if (GetAppConfig().GetWeightsPath(it, weights_file)) {
-			GetParamPool().Save(weights_file.c_str(),it);
+		if (GetAppConfig().GetWeightsPath(cur_iteration, weights_file)) {
+			if (weights_pool.Save(weights_file.c_str(), cur_iteration)) {
+				cout << " INFO: Save weights to `" << weights_file << "` ! \n";
+			}
+			if (GetAppConfig().UpdatePolicy() == Adam) {
+				replace_extension(weights_file, ".adam.rweights");
+				if (!adam_weights_pool.Save(weights_file.c_str(), cur_iteration)) {
+					cerr << " Warning: Save adam weights to `" << weights_file << " failed` ! \n";
+				}
+			}
+			
 		} 
-		if (GetAppConfig().RadmonScale(it, new_width, new_height) &&
+		if (GetAppConfig().RadmonScale(cur_iteration, new_width, new_height) &&
 			(new_width != input_width || new_height != input_width) ) {
 			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
 			input_width = new_width;
@@ -265,6 +375,7 @@ bool CNNNetwork::Train() {
 		
 	}
 	//TODO : save final 
+	cout << "\n INFO: Training done.\n";
 	return true;
 }
 
@@ -272,7 +383,7 @@ bool CNNNetwork::OutputIRModel(const string & dir, const string & name, int& l_i
 	string prefix = dir;
 	if (prefix.find_first_of('\\') != prefix.length() - 1 &&
 		prefix.find_first_of('/') != prefix.length() - 1)
-		prefix += '/';
+		prefix += SPLIT_CHAR;
 	//TODO: make sure dir exists
 	prefix += name;
 
@@ -378,9 +489,51 @@ void DrawTruthInGrid(const cv::Mat& orig_img, int stride, const cv::Scalar& colo
 
 
 }
-bool CNNNetwork::Detect(const char* filename) {
+static uint8_t calc_color(double temp1, double temp2, double temp3) {
+
+	double color;
+	if (6.0 * temp3 < 1.0)
+		color = temp1 + (temp2 - temp1) * 6.0* temp3;
+	else if (2.0 * temp3 < 1.0)
+		color = temp2;
+	else if (3.0 * temp3 < 2.0)
+		color = temp1 + (temp2 - temp1) * ((2.0 / 3.0) - temp3) * 6.0;
+	else
+		color = temp1;
+
+	return (uint8_t)(color * 255);
+}
+void hsl2rgb(double hue, double sat, double light, uint8_t& r, uint8_t& g, uint8_t& b) {
+	if (0.0 == sat) {
+		r = g = b = (uint8_t)(light * 255); 
+		return;
+	}
+	double temp1, temp2, temp3;
+	if (light < 0.5) {
+		temp2 = light * (1.0 + sat);
+	}
+	else {
+		temp2 = light + sat - light * sat;
+	}
+	temp1 = 2.0 * light - temp2;
+	temp3 = hue + 1.0 / 3.0;//for R, temp3=H+1.0/3.0	
+	if (temp3 > 1.0)
+		temp3 = temp3 - 1.0;
+	r = calc_color(temp1, temp2, temp3);
+	temp3 = hue; //for G, temp3=H
+	g = calc_color(temp1, temp2, temp3);
+	temp3 = hue - 1.0 / 3.0;//for B, temp3=H-1.0/3.0
+	if (temp3 < 0.0)
+		temp3 = temp3 + 1.0;
+	b = calc_color(temp1, temp2, temp3);
+
+}
+
+bool CNNNetwork::Detect(const char* filename, float threshold, const char* output_file) {
 	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !filename)
 		return false;
+
+	GetAppConfig().ThreshHold(threshold);
 	
 #if 0 
 	string s(filename);
@@ -443,7 +596,7 @@ bool CNNNetwork::Detect(const char* filename) {
 	input = image.GetData();
 	input_channels = image.GetChannels(); 
 
-	ForwardContext context = { false, false, false, false, nullptr};
+	ForwardContext context = { false, false, false, nullptr};
 	detections.clear();
 	for (int i = 0; i < (int)layers.size(); i++) {
 		Layer* l = layers[i];
@@ -460,38 +613,56 @@ bool CNNNetwork::Detect(const char* filename) {
 		}
 	}
 	input = nullptr;
-	string name;
+ 
 	int l, r, t, b;
-	cv::Scalar color(30, 70, 220 );
+	
+	uint8_t cr, cg, cb;
 	for (int i = 0; i < (int)detections.size(); i++) {
 		DetectionResult& dr = detections[i];
-		GetAppConfig().GetClass(dr.class_id, name);
-		l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
-		r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
-		t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
-		b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
-		cv::Point ptTopLeft(l, t),  ptBottomRight(r, b);
-		cv::rectangle(mat, ptTopLeft, ptBottomRight, color, 2); 
-		
+
+		const string& name = classes[dr.class_id];
 		char conf_text[20];
 		if (dr.confidence == 1.0f)
 			strcpy(conf_text, ": 100%");
 		else {
 			sprintf(conf_text, ": %.2f%%", dr.confidence * 100.0f);
 		}
+		l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
+		r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
+		t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
+		b = (int)((dr.y + dr.h * 0.5f) * mat.rows); 
+#if 0
+		int cx = (int)(dr.x * mat.cols);
+		int cy = (int)(dr.y * mat.rows);
+		cv::Point pt(cx, cy);
+		cv::circle(mat, pt, 4, color, 3);
+#else
+		if (classes.size() > 1) {
+			hsl2rgb((double)(dr.class_id + 1) / (double)classes.size(), dr.confidence, 0.5, cr, cg, cb);
+		}
+		else {
+			hsl2rgb( dr.confidence,1.0, 0.5, cr, cg, cb);
+		}
+		cv::Scalar color(cb,cg,cr);
+		cv::Point ptTopLeft(l, t),  ptBottomRight(r, b);
+		cv::rectangle(mat, ptTopLeft, ptBottomRight, color, 2);  
 		ptTopLeft.y -= 15;
-		cv::putText(mat, name + conf_text, ptTopLeft, cv::FONT_HERSHEY_COMPLEX, 0.8, color, 2);
-		int baseline = 0;
-		cv::Size size =  cv::getTextSize(name + conf_text, cv::FONT_HERSHEY_COMPLEX, 0.8, 2, &baseline);
-		cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] "  << conf_text << endl;
+		//cv::putText(mat, name + conf_text, ptTopLeft, cv::FONT_HERSHEY_COMPLEX, 0.8, color, 2);
+		//int baseline = 0;
+		//cv::Size size =  cv::getTextSize(name + conf_text, cv::FONT_HERSHEY_COMPLEX, 0.8, 2, &baseline);
+
+#endif
+		std::cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] "  << conf_text << endl;
 	}
 	vector<int> params;
 	params.push_back(cv::IMWRITE_JPEG_QUALITY);
 	params.push_back(90);
+	if (!output_file || 0 == *output_file)
+		output_file = "predictions.jpg";
 	
-	cv::imwrite("predictions.jpg", mat, params);
+	cv::imwrite(output_file, mat, params);
 
-	cout << " INFO: output written to predictions.jpg!\n";
+	std::cout << " INFO: output written to "<< output_file <<"!\n";
 	
 	return true;
 }

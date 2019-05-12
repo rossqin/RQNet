@@ -19,7 +19,6 @@ class CudaTensor;
 class ParamPool {
 protected:
 	bool release_mem;
-	map<string, CudaTensor*> uninit_params;
 	map<string, CudaTensor*> params;
 	cudnnTensorFormat_t tensor_order; // TO_NCHW by default
 	uint32_t iteration;
@@ -36,4 +35,3 @@ public:
 	 
 
 };
-ParamPool& GetParamPool();

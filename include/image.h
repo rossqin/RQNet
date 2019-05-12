@@ -1,7 +1,6 @@
 #pragma once
 
-#define ROTATE_TYPE_COUNT 6
-enum RotateType { NotRotate, ToLeft, ToRight, HorizFlip, VertiFlip, Rotate180 };
+
 class Image {
 protected:
 	bool normalized;

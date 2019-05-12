@@ -51,6 +51,7 @@ protected:
 public:
 	T*  ptr;
 	cudaError_t GetError() const { return err; }
+	inline int Bytes() const { return bytes; }
 	operator T*() const { return ptr; }
 	bool ToCPU(void* dest, int length = -1) const {
 		if (length <= 0) length = bytes;
@@ -64,6 +65,8 @@ public:
 		if (ptr && src) {
 			err = cudaMemcpy(ptr, src, bytes, cudaMemcpyHostToDevice);
 		}
+		else
+			cudaMemset(ptr, 0, bytes);
 	}
 	~CudaPtr() { if (ptr) cudaFree(ptr); }
 };
@@ -82,7 +85,7 @@ protected:
 	CudaTensor() {} 
 public:
 	CudaTensor(const CudaTensor& right);
-	CudaTensor(cudnnDataType_t t = CUDNN_DATA_FLOAT, cudnnTensorFormat_t f = CUDNN_TENSOR_NCHW);
+	CudaTensor(cudnnDataType_t t , cudnnTensorFormat_t f );
 	~CudaTensor();
 	inline int Batch() const { return n; }
 	inline int Channel() const { return c; }
@@ -122,4 +125,6 @@ public:
 	bool Randomize();
 	bool Save(const char* filename, int batch = -1);
 	bool DisplayInFile(const char* filename, int batch = -1);
+	bool Cache(char*& cpu_data);
+	bool Restore(char*& cpu_data);
 };

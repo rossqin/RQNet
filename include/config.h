@@ -1,9 +1,7 @@
 #pragma once
 #include "tinyxml2.h"
 using namespace tinyxml2; 
-enum LearningRatePolicy {
-	CONSTANT, STEP, EXP, POLY, STEPS, SIG, RANDOM
-};
+
 class Dataset {
 	mutable vector<string> filenames;
 	vector<string> classes;
@@ -12,16 +10,47 @@ public:
 	~Dataset() {}
 	inline size_t GetSize() const { return filenames.size(); }
 	inline const string& FilenameAt(size_t i) const { return filenames[i]; }
-	inline size_t GetClasses() const { return classes.size(); }
-	inline const string& ClassAt(size_t i) const { return classes[i]; }
 	void ShuffleFiles() const ;
 };
+struct AdamConfig {
+	float alpha;
+	float beta1;
+	float beta2;
+	float epsilon;
+	AdamConfig() { alpha = 0.001f; beta1 = 0.9f; beta2 = 0.999f; epsilon = 1.0e-8f; }
+};
+struct SgdConfig {
+	float base_rate;
+	int burnin;
+	int step;
+	float power;
+	float gamma; 
+	float scale;
+	float momentum;
+	vector< pair<int, float> > steps;
+	enum LearningRatePolicy {
+		CONSTANT, STEP, EXP, POLY, STEPS, SIG, RANDOM
+	} policy;
+	SgdConfig() {
+		base_rate = 1.0e-5f; 
+		burnin = 1000; 
+		power = 4.0f; 
+		gamma = 1.0f; 
+		step = 1; 
+		policy = CONSTANT; 
+		scale = 1.0f; 
+		momentum = 0.9f;
+	}
 
+};
+enum ParamsUpdatePolicy {
+	SGD = 0 ,
+	Adam 
+};
 class AppConfig {
 protected:  
 	Dataset* dataset;
-	int stop_interation;
-	bool restart_interation;
+	int stop_interation; 
 
 	bool save_input;
 	string input_dir;
@@ -29,8 +58,7 @@ protected:
 	int save_weight_interval;
 	string weight_file_prefix;
 	string out_dir;
-	float momentum;
-	float decay;
+	
 
 	//da augmentation
 	float da_jitter;
@@ -46,32 +74,23 @@ protected:
 	vector< pair<int, int> > scales;
 
 	int batch;
-	int subdivision;
-
-	//learning_rates ;
-	float lr_base;
-	int lr_burnin;
-	int lr_step;
-	float lr_scale;
-	float lr_power;
-	float lr_gamma;
-	LearningRatePolicy lr_policy;
-
-	vector< pair<int, float> > lr_steps;
-	vector<string> classes;
+	int subdivision; 
 
 	float thresh_hold;
-	bool freezeConvParams;
-	bool freezeBNParams;
-	bool freezeActParams;
-	bool small_object;
+	float mns_thresh_hold;
+	bool freeze_conv_params;
+	bool freeze_bn_params;
+	bool focal_loss;
+	bool train_bg;
 
-	string update_strategy;
+	ParamsUpdatePolicy update_policy;
+	AdamConfig adam_config;
+	SgdConfig sgd_config;
+	float decay;
 
 	//return dataset name
 	const char* LoadTrainingSection(XMLElement* root);
-	const char* LoadTestingSection(XMLElement* root);
-	void LoadDetectSection(XMLElement* root);
+	const char* LoadTestingSection(XMLElement* root); 
 public :
 	
 	AppConfig();
@@ -84,8 +103,7 @@ public :
 	bool Load(const char* filename, int mode = 0);
 
 	inline const Dataset* GetDataSet() const { return dataset; }	
-	inline bool IsLastIteration(int i) const { return i >= stop_interation; 	}
-	inline bool FromFirstIteration() const { return restart_interation; }
+	inline bool IsLastIteration(int i) const { return i >= stop_interation; } 
   
 	inline int  GetLastIteration() const { return stop_interation; }
 	inline bool SaveInput() const { return save_input; }
@@ -97,27 +115,29 @@ public :
 	inline float GetExposure() const { return da_exposure; }
 	inline float GetHue() const { return da_hue; }
 
-
+	inline const AdamConfig& GetAdamConfig() const { return adam_config; }
+	inline const SgdConfig& GetSgdConfig() const { return sgd_config; }
+	inline float Decay() const { return decay * batch; }
 	inline int GetBatch() const { return batch; }
 	inline int GetSubdivision() const { return subdivision; } 
 
 	inline bool MultiScaleEnable() const { return ms_enable; }
-	inline int GetMultiScaleInterval() const { return ms_interval; }
+	inline int GetMultiScaleInterval() const { return ms_interval; } 
 
-	bool GetClass(int i, string& result) const;
-	inline int GetClasses() const { return (int)classes.size(); }
 	inline float ThreshHold() const { return thresh_hold; }
+	inline void ThreshHold(float t) { thresh_hold = t; }
+	inline float NMSThreshold() const { return mns_thresh_hold; }
 
-	inline bool ConvParamsFreezed() const { return freezeConvParams; }
-	inline bool BNParamsFreezed() const { return freezeBNParams; }
-	inline bool ActParamsFreezed() const { return freezeActParams; }
-	inline bool SmallObjEnabled() const { return small_object; } 
+	inline bool ConvParamsFreezed() const { return freeze_conv_params; }
+	inline bool BNParamsFreezed() const { return freeze_bn_params; }
+	inline bool FocalLoss() const { return focal_loss; } 
+
+	inline bool TrainBackground() const { return train_bg; }
 
 	inline bool FastResize() const { return fast_resize; }
-	inline float Decay()const { return decay; }
-	inline float Momentum() const { return momentum; }
+	 
 
-	inline const string& UpdateStrategy() const { return update_strategy; }
+	inline ParamsUpdatePolicy UpdatePolicy() const { return update_policy; }
 
 	bool RadmonScale(uint32_t it, int& new_width, int& new_height) const;
 	

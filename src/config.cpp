@@ -20,40 +20,76 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	XMLElement* te = root->FirstChildElement("train-settings");
 	if (nullptr == te) return false;
 
-	freezeConvParams = te->BoolAttribute("freeze-conv");
-	freezeActParams = te->BoolAttribute("freeze-activation");
-	freezeBNParams = te->BoolAttribute("freeze-batchnorm");
+	freeze_conv_params = te->BoolAttribute("freeze-conv"); 
+	freeze_bn_params = te->BoolAttribute("freeze-batchnorm");
 
 	const char* dataset_name = te->GetText("dataset");
 	te->QueryIntText("termination", stop_interation);
-
+	te->QueryBoolText("focal-loss", focal_loss);
 	te->QueryIntText("weights/save", save_weight_interval);
-	te->QueryText("weights/output_dir", out_dir);
+	te->QueryText("weights/output-dir", out_dir);
 	te->QueryText("weights/prefix", weight_file_prefix);
-	te->QueryFloatText("weights/momentum", momentum);
+	te->QueryFloatText("weights/momentum", sgd_config.momentum);
 	te->QueryFloatText("weights/decay", decay);
 
-	te->QueryFloatText("data_aug/jitter", da_jitter);
-	te->QueryFloatText("data_aug/saturation", da_saturation);
-	te->QueryFloatText("data_aug/exposure", da_exposure);
-	te->QueryFloatText("data_aug/hue", da_hue);
+	te->QueryFloatText("data-augment/jitter", da_jitter);
+	te->QueryFloatText("data-augment/saturation", da_saturation);
+	te->QueryFloatText("data-augment/exposure", da_exposure);
+	te->QueryFloatText("data-augment/hue", da_hue);
 	te->QueryIntText("batch", batch);
 	te->QueryIntText("subdivision", subdivision);
-	te->QueryFloatText("learning_rate/base", lr_base);
-	te->QueryIntText("learning_rate/burn_in", lr_burnin);
-	te->QueryFloatText("learning_rate/power", lr_power);
-	te->QueryFloatText("learning_rate/gamma", lr_gamma);
-	te->QueryBoolText("restart", restart_interation);
-//	te->QueryIntText("max_truths", max_truths);
 
+	te->QueryBoolText("train-background", train_bg);
+	
 
-	te->QueryText("update_strategy", update_strategy);
+	string str;
+	te->QueryText("params-update-policy", str);
+	upper(str); 
+	if (str == "SGD") {
+		update_policy = SGD;
+	}
+	else if (str == "ADAM") {
+		update_policy = Adam;
+	}
+	else {
+		cout << " Warning: invalid params-update-policy field, set to SGD\n";
+		update_policy = SGD;
+	}
+	if (update_policy == SGD) {
+		te->QueryFloatText("learning-rate/base", sgd_config.base_rate);
+		
+		te->QueryIntText("learning-rate/burn-in", sgd_config.burnin);
+		te->QueryFloatText("learning-rate/power", sgd_config.power);
+		te->QueryFloatText("learning-rate/scale", sgd_config.scale);
+		te->QueryFloatText("learning-rate/gamma", sgd_config.gamma);
+		if (XML_SUCCESS == te->QueryText("learning-rate/policy", str)) {
+			if (str == "steps") {
+				sgd_config.policy = SgdConfig::STEPS;
+				const XMLElement* step = te->FirstChildElement("learning-rate/steps/step");
+				while (step) {
+					int it = step->IntAttribute("iteration", 0);
+					float lr = step->FloatAttribute("rate", 0.0);
+					if (it > 0 && lr > 0.0) {
+						sgd_config.steps.push_back(pair<int, float>(it, lr));
+					}
+					step = step->NextSiblingElement();
+				}
 
-	te->QueryBoolText("save_input", save_input);
-	te->QueryText("input_files_dir", input_dir);
+			}
+			//TODO: implement more policies here
+		}
+	}
+	else {
+		te->QueryFloatText("learning-rate/base", adam_config.alpha);
+		te->QueryFloatText("learning-rate/beta1", adam_config.beta1);
+		te->QueryFloatText("learning-rate/beta2", adam_config.beta2);
+		te->QueryFloatText("learning-rate/epsilon", adam_config.epsilon);
+	}
+	te->QueryBoolText("save-input", save_input);
+	te->QueryText("input-files-dir", input_dir);
 	if (input_dir.find_last_of('/') != input_dir.length() &&
 		input_dir.find_last_of('\\') != input_dir.length())
-		input_dir += "/";
+		input_dir += SPLIT_CHAR;
 
 	struct stat s = { 0 };
 	stat(input_dir.c_str(), &s);
@@ -63,29 +99,9 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 			cerr << "Error: Try making directory `" << input_dir.c_str() << "` failed! \n";
 			save_input = false;
 		}
-	}
-	string str;
-	if (XML_SUCCESS == te->QueryText("learning_rate/policy", str)) {
-		if (str == "steps") {
-			lr_policy = STEPS;
-			const XMLElement* step = te->FirstChildElement("learning_rate/steps/step");
-			while (step) {
-				int it = step->IntAttribute("iteration", 0);
-				float lr = step->FloatAttribute("rate", 0.0);
-				if (it > 0 && lr > 0.0) {
-					lr_steps.push_back(pair<int, float>(it, lr));
-				}
-				step = step->NextSiblingElement();
-			}
+	} 
 
-		}
-		else if (str == "constant") {
-			lr_policy = CONSTANT;
-		}
-	}
-
-
-	const XMLElement* ms = te->FirstChildElement("multi_scale");
+	const XMLElement* ms = te->FirstChildElement("multi-scale");
 	if (ms) {
 		ms->QueryBoolAttribute("enable", &ms_enable);
 		ms->QueryIntAttribute("interval", &ms_interval);
@@ -102,36 +118,11 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 const char * AppConfig::LoadTestingSection(XMLElement * root) {
 	return nullptr;
 }
-bool AppConfig::GetClass(int i, string& result) const {
-	if (i < 0) {
-		result = "???";
-		return false;
-	}
-	if (i >= (int)classes.size()) {
-		char temp[100];
-		sprintf(temp, "Label #%02d", i);
-		result = temp;
-		return false;
-	}
-	result = classes[i];
-	return true;
-}
-void AppConfig::LoadDetectSection(XMLElement * root) {
-	XMLElement* ds = root->FirstChildElement("detect-settings");
-	if (!ds) return;
-//	ds->QueryIntText("max_truths", max_truths);	
-	XMLElement* cls = ds->FirstChildElement("classes/class");
-	while (cls) {
-		const char* text = cls->GetText();
-		if (text)
-			classes.push_back(text);
-		cls = cls->NextSiblingElement();
-	}
-}
+ 
 AppConfig::AppConfig() {
 	dataset = nullptr;
 	stop_interation = 500000;
-	restart_interation = false;
+	focal_loss = true;
 
 	save_input = false;
 	input_dir = "network_input";
@@ -139,8 +130,6 @@ AppConfig::AppConfig() {
 	save_weight_interval = 100 ;
 	weight_file_prefix = "rq_weights_";
 	out_dir = "backup/";
-	momentum = 0.9f;
-	decay = 0.005f;
 
 	//da augmentation
 	da_jitter = 0.0;
@@ -156,38 +145,32 @@ AppConfig::AppConfig() {
 	subdivision = 1;
 
 	//learning_rates ;
-	lr_base = 0.001f;
-	lr_burnin = 1000; 
-	freezeConvParams = false;
-	freezeBNParams = false;
-	freezeActParams = false;
+ 
+	freeze_conv_params = false;
+	freeze_bn_params = false; 
 
-	fast_resize = true;
-	small_object = true;
-	update_strategy = "SGD";
-	lr_step = 1;
-	lr_scale = 1.0f;
-	lr_power = 4.0f;
-	lr_gamma = 1.0f;
-	thresh_hold = 0.4f;
+	fast_resize = false; 
+	update_policy = SGD;	
+	thresh_hold = 0.5f;
+	mns_thresh_hold = 0.8f;
+	decay = 0.0005f;
+	train_bg = true;
 }
 
-AppConfig::~AppConfig()
-{
+AppConfig::~AppConfig() {
 	if (dataset)
 		delete dataset;
 }
 
-bool AppConfig::Load(const char * filename, int mode) {
-
+bool AppConfig::Load(const char * filename, int mode) { 
 
 	tinyxml2::XMLDocument doc;
 	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
 
 	XMLElement* root = doc.RootElement();
-	if (!root) return false;
-	small_object = root->BoolAttribute("small-object", true);
-	root->QueryFloatText("thresh_hold", thresh_hold);
+	if (!root) return false; 
+	root->QueryFloatText("thresh-hold", thresh_hold);
+	root->QueryFloatText("nms-thresh-hold", mns_thresh_hold);
 	const XMLElement* ds = nullptr;
 	if (0 == mode || 1 == mode) {
 		ds = root->FirstChildElement("datasets");
@@ -207,8 +190,7 @@ bool AppConfig::Load(const char * filename, int mode) {
 		break;
 	case 2:
 		batch = 1;
-		subdivision = 1;
-		LoadDetectSection(root);
+		subdivision = 1; 
 		break;
 	default:
 		return false;
@@ -223,7 +205,7 @@ bool AppConfig::Load(const char * filename, int mode) {
 			}
 			ds = ds->NextSiblingElement();
 		}
-	}
+	} 
 	return true;
 }
 
@@ -263,36 +245,41 @@ bool AppConfig::GetWeightsPath(uint32_t it, string & filename) const {
 }
  
 
-float AppConfig::GetCurrentLearningRate(int iteration) const {
+float AppConfig::GetCurrentLearningRate(int iteration) const { 
+	if (update_policy == Adam)
+		return adam_config.alpha;
 	float rate;
-	if (iteration < lr_burnin)
-		return  lr_base * pow((float)iteration / lr_burnin, lr_power);
-	switch (lr_policy) {
-	case CONSTANT:
-		return lr_base;
-	case STEP:
-		return lr_base * pow(lr_scale, iteration / lr_step);
-	case STEPS:
-		rate = lr_base;
-		for (int i = 0; i < (int)lr_steps.size(); ++i) {
-			if (lr_steps[i].first > iteration) return rate;
-			rate = lr_steps[i].second;
+	if (iteration < sgd_config.burnin) {
+		float temp =  sgd_config.base_rate * pow((float)iteration / sgd_config.burnin, sgd_config.power); 
+		if (temp < 1.0e-6f) temp = 1.0e-6f;
+		return temp;
+	}
+	switch (sgd_config.policy) {
+	case SgdConfig::CONSTANT:
+		return sgd_config.base_rate;
+	case SgdConfig::STEP:
+		return sgd_config.base_rate * pow(sgd_config.scale, iteration / sgd_config.step);
+	case SgdConfig::STEPS:
+		rate = sgd_config.base_rate;
+		for (int i = 0; i < (int)sgd_config.steps.size(); ++i) {
+			if (sgd_config.steps[i].first > iteration) return rate;
+			rate = sgd_config.steps[i].second;
 			//if(steps[i] > iteration - 1 && scales[i] > 1) reset_momentum(net);
 		}
 		return rate;
-	case EXP:
-		return lr_base * pow(lr_gamma, iteration);
-	case POLY:
-		return lr_base * pow(1 - (float)iteration / stop_interation, lr_power);
-		//if (iteration < lr_burnin) return lr_base * pow((float)iteration / lr_burnin, power);
-		//return lr_base * pow(1 - (float)iteration / max_batches, power);
-	case RANDOM:
-		return lr_base * pow(rand_uniform_strong(0.0, 1.0), lr_power);
-	case SIG:
-		return lr_base * (1.0f / (1.0f + exp(lr_gamma *(iteration - lr_step))));
+	case SgdConfig::EXP:
+		return sgd_config.base_rate * pow(sgd_config.gamma, iteration);
+	case SgdConfig::POLY:
+		return sgd_config.base_rate * pow(1 - (float)iteration / stop_interation, sgd_config.power);
+		//if (iteration < sgd_config.burnin) return sgd_config.base_rate * pow((float)iteration / sgd_config.burnin, power);
+		//return sgd_config.base_rate * pow(1 - (float)iteration / max_batches, power);
+	case SgdConfig::RANDOM:
+		return sgd_config.base_rate * pow(rand_uniform_strong(0.0, 1.0), sgd_config.power);
+	case SgdConfig::SIG:
+		return sgd_config.base_rate * (1.0f / (1.0f + exp(sgd_config.gamma *(iteration - sgd_config.step))));
 	default:
 		cerr << "Policy is weird!" << endl;
-		return lr_base;
+		return sgd_config.base_rate;
 	}
 
 	return 0.0f;
@@ -308,7 +295,7 @@ Dataset::Dataset(const XMLElement * element) {
 		 
 		if (str.find_last_of('/') != str.length() &&
 			str.find_last_of('\\') != str.length())
-			str += "/";
+			str += SPLIT_CHAR;
 		string  search_path = str + "*.*";
 		
 

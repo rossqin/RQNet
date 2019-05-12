@@ -1,9 +1,8 @@
 #pragma once
 #include "image.h"
 struct ImageLabelParseInfo {
-	const char* file_name; 
+	//const char* file_name; 
 	RotateType rotate;
-	bool small_object;
 	int crop_l;
 	int crop_r;
 	int crop_t;
@@ -16,12 +15,12 @@ struct ImageLabelParseInfo {
 	float sat;
 	float expo;
 	int classes;
-	float* image_data;
+	//float* image_data;
 	LPObjectInfos truths;
 	int channels;
 	int image_size;
-	bool failed;
-	int thread_index;
+	//bool failed;
+	//int thread_index;
 };
 typedef char* pstr_t;
 
@@ -34,7 +33,8 @@ public:
 	DataLoader() { start_index = 0; }
 	~DataLoader() {}
 
-	bool MiniBatchLoad(float* input, LPObjectInfos* truth_data, int channels, int mini_batch, int width, int height);
+	bool MiniBatchLoad(float* input, LPObjectInfos* truth_data, int channels, int mini_batch, int width, 
+		int height, int classes, vector<string>* records = nullptr, RotateType* rotate_infos = nullptr);
 
 
 };

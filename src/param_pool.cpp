@@ -2,11 +2,7 @@
 #include "cuda_tensor.h"
 #include "param_pool.h"
 #include "config.h"
-static ParamPool thePool;
 
-ParamPool& GetParamPool() {
-	return thePool;
-}
 
 ParamPool::~ParamPool() {
 	if (release_mem) {
@@ -17,7 +13,7 @@ ParamPool::~ParamPool() {
 }
 
 void ParamPool::Put(string key, CudaTensor* tensor) {
-	uninit_params.insert(pair<string, CudaTensor*>(key, tensor));
+	params.insert(pair<string, CudaTensor*>(key, tensor));
 }
 
 bool ParamPool::Load(const char * filename) {
@@ -32,40 +28,36 @@ bool ParamPool::Load(const char * filename) {
 	str_buf[header.strings_bytes] = 0;
 	tensor_data_header data_header;
 	string name; 
-	while (!f.eof() && uninit_params.size() > 0 ) {
+	size_t total_read = sizeof(param_file_header) + f.gcount();
+	
+	while (!f.eof()) {
 		f.read(reinterpret_cast<char*>(&data_header), sizeof(tensor_data_header));
-		if (f.gcount() < sizeof(tensor_data_header)) {
-			cerr << "Warning: " << uninit_params.size() << " params are not loaded from weights file!\n";
+		size_t read_length = f.gcount();
+		if (0 == read_length) {
+			// f.eof() is false , really strannge
+			break;
+		}
+		name.assign(str_buf + data_header.name_index + 1, static_cast<uint8_t>(str_buf[data_header.name_index]));
+		if (read_length < sizeof(tensor_data_header)) {
+			cerr << " Warning: Some params are not loaded from weights file!\n";
 			break;
 		}
 		//TODO: check datatype
-		name.assign(str_buf + data_header.name_index + 1, static_cast<uint8_t>(str_buf[data_header.name_index]));
-		auto it = uninit_params.find(name); 
+		total_read += read_length;
+		auto it = params.find(name);
+		char* buf = New char[data_header.bytes];
+		f.read(buf, data_header.bytes);
+		read_length = f.gcount();
+		total_read += read_length;
 		
-		if (it != uninit_params.end()) {
-			CudaTensor* tensor = it->second; 
-			//TODO: check tensor order
-			char* buf = New char[data_header.bytes];
-			f.read(buf, data_header.bytes);
-			tensor->Push(buf, data_header); 
-			delete[]buf;
-			 
-			params.insert(*it);
-			uninit_params.erase(it); 
+		if (it != params.end()) {
+			it->second->Push(buf, data_header); 
 		}
-		else {
-			cerr << "Loading parameter `" << name << "` failed. ignored.\n";
+		else { 
+			cerr << " Error: Loading parameter `" << name << "` failed. ignored.\n";
 		}
-		
-	}
-	if (uninit_params.size() > 0) {
-		for (auto it = uninit_params.begin(); it != uninit_params.end(); it++) {
-			it->second->Randomize();
-			params.insert(*it);
-		}
-		uninit_params.clear();
-	}
-
+		delete[]buf;
+	}  
 	delete[]str_buf;
 	f.close();
 	return true;
@@ -260,16 +252,18 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 			else if (key == "stride")
 				currentLayer.stride = atoi(val.c_str());
 			else if (key == "from") {
-				int t = atoi(val.c_str());
+				int t = atoi(val.c_str()); 
+				currentLayer.layers[0] = layers.size() - 2;
 				if (t < 0) t += (layers.size() - 1);
-				currentLayer.layers[0] = t;
+				currentLayer.layers[1] = t;
+			/*
 				if (layers[t].layer_type == DLT_CONVOLUTIONAL) {
 					channels = layers[t].filters;
 				}
 				else {
 					channels = layers[t].channels;
 				}
-				 
+				 */
 			}
 			else if (key == "pad") {
 				currentLayer.padding = (val == "1") || (val == "true");
@@ -297,6 +291,9 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					currentLayer.layers[i] = t;					 
 				}
 			}
+			else if (key == "classes") {
+				classes = atoi(val.c_str());
+			}
 			else if (key == "mask") {
 				strcpy(currentLayer.anchors, val.c_str());
 			}
@@ -316,8 +313,10 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 	char fname[MAX_PATH];
 	_splitpath(cfg, nullptr, nullptr, fname, nullptr);
 	string dest_dir(out_dir);
-	if (dest_dir.at(dest_dir.length() - 1) != '/' && dest_dir.at(dest_dir.length() - 1) != '\\')
-		dest_dir += '/';
+	if (dest_dir.empty())
+		dest_dir = "./";
+	else if (dest_dir.at(dest_dir.length() - 1) != '/' && dest_dir.at(dest_dir.length() - 1) != '\\')
+		dest_dir += SPLIT_CHAR;
 	 
 	netfile.open((dest_dir + fname + ".xml").c_str(),ios::out | ios::trunc);
 	
@@ -397,7 +396,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				tensor->Push(cpu_data);
 				delete[]cpu_data;
 				params.insert(pair<string, CudaTensor*>(param_name, tensor)); 
-				if (strcmpi(l.activation, "linear")) {
+				if (_strcmpi(l.activation, "linear")) {
 					netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation
 						<< "\" before=\"" << before << "\" />\n";
 					sprintf(l.last_module, "%s.activation", l.output_id);
@@ -423,10 +422,22 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				before = l.last_module; 
 				break;
 			case DLT_SHORTCUT: 
-				before = layers[l.layers[0]].last_module; 
-				netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" 
-					<< l.activation << "\" before=\"" << before << "\" />\n";
-				sprintf(l.last_module, "%s.activation", l.output_id);
+				before = "";
+				for (int i = 0; i < 8 && l.layers[i] != 0; i++) {
+					if (i > 0) before += ',';
+					before += layers[l.layers[i]].last_module;
+
+				}
+				netfile << "\t\t\t<module id=\"shortcut\" type=\"shortcut\" before=\"" << before << "\" />\n";
+				
+				if (0 == _strcmpi(l.activation, "linear")) {
+					sprintf(l.last_module, "%s.shortcut", l.output_id);
+				}
+				else {
+					netfile << "\t\t\t<module id=\"activation\" type=\"activation\" method=\"" << l.activation
+						<< "\" before=\"shortcut\" />\n";
+					sprintf(l.last_module, "%s.activation", l.output_id);
+				}
 				before = l.last_module; 
 				break;
 			case DLT_ROUTE:

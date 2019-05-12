@@ -6,8 +6,7 @@
 #include "inference_module.h"
 
 bool PoolingModule::Resize(int w, int h) {
-	int b = network->MiniBatch();
-	cudnnTensorDescriptor_t x_desc = input.Descriptor();
+	int b = network->MiniBatch(); 
 	bool created = false;
 	input_height = h;
 	input_width = w;
@@ -78,12 +77,12 @@ bool PoolingModule::Forward(ForwardContext & context) {
 		return false;
 	}
 	if (mode != CUDNN_POOLING_MAX) return false;
+
 	
 	int window = (window_h << 16) + (window_w & 0xffff);
 	int stride = (stride_h << 16) + (stride_w & 0xffff); 
-	int pad = (pad_wl << 24) + ((pad_wr & 0xff) << 16) + ((pad_ht & 0xff) << 8) + (pad_hb & 0xff);
- 
-	return forward_maxpool(output,input,indexes, window, stride, pad);
+	int pad = (pad_wl << 24) + ((pad_wr & 0xff) << 16) + ((pad_ht & 0xff) << 8) + (pad_hb & 0xff); 
+	return forward_maxpool(output, *(context.input), indexes, window, stride, pad); 
 }
 extern bool backward_maxpool(CudaTensor& dx, const CudaTensor& dy, int* indexes, int window, int stride, int pad);
 bool PoolingModule::Backward(CudaTensor & delta) {

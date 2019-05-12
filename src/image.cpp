@@ -221,30 +221,37 @@ bool Image::Load(const char * filename, int c, bool norm ) {
 	
 	//long t2 = GetTickCount();
 	//cout << "****** stbi_load " << filename << " in " << (t2 - t1) << "ms.\n";
-	size_t image_size = mat.rows * mat.cols * mat.channels();
-	CudaPtr<float> temp_float(image_size);
-	CudaPtr<uint8_t> temp_uchar(image_size, mat.data);
-	// convert HWC to CHW
-	bool ret = hwc_uc_2_chw_float(temp_float, temp_uchar, mat.cols, mat.rows, mat.channels(), norm);
-	normalized = norm;
-	if (ret) {
-		
-		height = mat.rows;
-		width = mat.cols;
-		channels = mat.channels();
-		if (data) {
-			delete[]data;
-			data = nullptr;
+	channels = mat.channels();
+	height = mat.rows;
+	width = mat.cols;
+	normalized = norm; 
+	int channel_size = height * width;
+	float norm_factor = 1.0f / 255.0f;
+	size_t image_size = channel_size * channels;
+	CpuPtr<float> temp_float(image_size); 
+	uint8_t* raw_data = reinterpret_cast<uint8_t*>(mat.data);
+	for (int y = 0, i = 0; y < height; y++) {
+		for (int x = 0; x < width; x++,i++) {
+			for (int c = 0; c < channels; c++) {
+				if (norm)
+					temp_float.ptr[c * channel_size + i] = static_cast<float>(raw_data[i * channels + c]) * norm_factor;
+				else
+					temp_float.ptr[c * channel_size + i] = static_cast<float>(raw_data[i * channels + c]);
+			}
 		}
-		if (gpu_data) {
-			cudaFree(gpu_data); 
-		}
-		gpu_data = temp_float.ptr;
-		temp_float.ptr = nullptr;
 	}
-	
-	normalized = norm;
-	return ret;
+	//bool ret = hwc_uc_2_chw_float(temp_float, temp_uchar, mat.cols, mat.rows, mat.channels(), norm);
+	if (data) {
+		delete[]data;
+		data = nullptr;
+	}
+	if (gpu_data) {
+		cudaFree(gpu_data);
+		gpu_data = nullptr;
+	}
+	data = temp_float.ptr;
+	temp_float.ptr = nullptr; 
+	return true;
 }
 bool Image::Gray(bool rgb /* = true */) {
 	

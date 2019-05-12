@@ -26,6 +26,9 @@
 #ifdef _WIN32 
 #pragma warning (disable:4819 4244)
 #include <Windows.h>
+#define SPLIT_CHAR '\\'
+#else
+#define SPLIT_CHAR '/'
 #endif
 #ifdef _DEBUG
 #define New   new(_NORMAL_BLOCK, __FILE__, __LINE__)
@@ -57,9 +60,9 @@ typedef const char* pconstchar;
 unsigned int random_gen();
 float random_float();
 float rand_uniform_strong(float min_, float max_);
-const char* get_time_str();
+const char* get_time_str(bool standard = false);
 const char* make_path(const char* dir, const char* base, const char* ext);
-float get_next_float(const char*& str);
+double get_next_float(const char*& str);
 int get_next_int(const char*& str);
 float* make_float_vector(int n);
 float rand_scale(float s);
@@ -77,6 +80,12 @@ bool f32_to_f16(__half* dst, const float* src, size_t n);
 bool f16_to_f32(float* dst, const __half* src, size_t n);
 const char* get_dir_from_full_path(string& path);
 void upper(string& str);
+const char* file_part(const string& path);
+float focal_loss_delta(float pred, float alpha = 0.5f, float gamma = 4.0f);
 #define FULL_DEBUGGING 1
 #define DEBUGGING_DIR "\\AI\\Data\\debugging\\RQNet\\"
+
+#define ROTATE_TYPE_COUNT 6
+enum RotateType { NotRotate, ToLeft, ToRight, HorizFlip, VertiFlip, Rotate180 };
+const char* rotate_to_str(RotateType rt);
 #endif
