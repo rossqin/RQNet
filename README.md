@@ -37,7 +37,7 @@ Windows 10 + Visual Studio 2015 + cuda10.1 + cuDNN 7.5 + GTX 1060
  If input file is not given, then use a camera.
 
 
-  To convert .weights file to .rweiths files:
+  To convert .weights file to .rweights files:
 
        RQNet wconv -c <path/to/darknet/network/config> -i <path/to/darknet/weights> [-o <path/to/output>]
        
