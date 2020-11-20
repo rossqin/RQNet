@@ -55,17 +55,42 @@ bool network_train(const char* data_definition, const char*  network_definition,
 	return true;
 
 }
-bool network_test(const char* data_definition, const char*  network_definition, const char* weights_path) {
-	return false;
-}
-bool detect_image(const char* data_definition, const char*  network_definition,
-	const char* weights_path, const char* image_file, const char* data_type, float threds_hold , const char* output_file) {
+bool network_eval(const char* data_definition, const char*  network_definition, const char* weights_path ,float threshold) {
 	cout << "\n Loading application configuration `" << data_definition << "` ... ";
 
-	/*if (!GetAppConfig().Load(data_definition,2)) {
+	if (!GetAppConfig().Load(data_definition, 1)) {
 		cerr << "Load configuration file `" << data_definition << "` failed!\n";
 		return false;
-	}*/
+	}
+	cout << " Done!\n Loading network configuration `" << network_definition << "` ... ";
+	CNNNetwork network;
+	if (!network.Load(network_definition)) {
+		cout << " Failed! \n";
+		cerr << "Load network file `" << network_definition << "` failed!\n";
+		return false;
+	}
+	cout << " Done !\n Loading parameters from `" << weights_path << "... ";
+
+	if (!network.weights_pool.Load(weights_path)) {
+		cout << " Failed! \n";
+		cerr << "Load network file `" << weights_path << "` failed!\n";
+
+		return false;
+	}
+	cout << " Done !\n";
+	if (!cuDNNInitialize()) return false;
+	if (threshold > 0.0f) GetAppConfig().ThreshHold(threshold);
+	bool ret = network.Eval();
+	cuDNNFinalize();
+	return ret; 
+}
+bool detect_image(const char* data_definition, const char*  network_definition, const char* weights_path, const char* path, const char* data_type,float threshold ) {
+	cout << "\n Loading application configuration `" << data_definition << "` ... ";
+
+	if (!GetAppConfig().Load(data_definition,2)) {
+		cerr << "Load configuration file `" << data_definition << "` failed!\n";
+		return false;
+	}
 	cout << " Done!\n Loading network configuration `" << network_definition << "` ... "; 
 	cudnnDataType_t t = CUDNN_DATA_DOUBLE;
 	if (data_type && *data_type) {
@@ -94,12 +119,21 @@ bool detect_image(const char* data_definition, const char*  network_definition,
 	}
 	cout << " Done !\n";
 	if (!cuDNNInitialize()) return false;
-	bool ret = network.Detect(image_file, threds_hold, output_file);
+	if (threshold > 0.0f) GetAppConfig().ThreshHold(threshold);
+	bool ret = network.Detect(path);
 	cuDNNFinalize();
 	return ret;
 }
 bool detect_video(const char*  network_definition, const char* weights_path, const char* video_file) {
 	return false;
+}
+bool dump_weight(const char* weight_file, const char* output_dir) {
+	ParamPool weights_pool; 
+	if (0 == *weight_file || !weights_pool.Load(weight_file)) {
+		cerr << "Failed to load `" << weight_file << "`!\n";
+		return false;
+	}
+	return weights_pool.DumpAsExcels(output_dir);
 }
 bool convert_openvino(const char*  network_definition, const char* weights_path, const char* data_type, const char* ouput_dir ,const char* name ) {
  
@@ -171,8 +205,8 @@ ArgDef defs[] = {
 	{ "-o", "", false, output_message },
 	{ "-c","",  false, darknet_message },
 	{ "-t","", false, "data type: FP32 or FP16"},
-	{ "-restart", "false",false, ""},
-	{ "-threshold","0.7",false,""}
+	{ "-r","", false, "prediction confidence threshold" },
+	{ "-restart", "false",false, ""}
 }; 
 
 static void parse_cmd_line(int argc, char* argv[]) {
@@ -238,23 +272,34 @@ int main(int argc, char* argv[]) {
 	const char* FLAGS_i = defs[3].param;
 	const char* FLAGS_o = defs[4].param;
 	const char* FLAGS_c = defs[5].param;
-	const char* FLAGS_t = defs[6].param; 
+	const char* FLAGS_t = defs[6].param;
+	const char* FLAGS_r = defs[7].param;
 
 	bool ret = false;
 	
 	
 	if (strcmp(command, "train") == 0) {
-		ret = network_train(FLAGS_d, FLAGS_n, FLAGS_w, defs[7].exists || defs[7].param == "true");
+		ret = network_train(FLAGS_d, FLAGS_n, FLAGS_w, defs[8].exists || defs[8].param == "true");
 	}
-	else if (strcmp(command, "test") == 0) {
-		ret = network_test(FLAGS_d, FLAGS_n, FLAGS_w);
+	else if (strcmp(command, "eval") == 0) {
+		float threshold = 0.0f;
+		if (FLAGS_r && *FLAGS_r) {
+			threshold = atof(FLAGS_r);
+		}
+		ret = network_eval(FLAGS_d, FLAGS_n, FLAGS_w, threshold);
 	}
 	else if (strcmp(command, "detect") == 0) {
-		float t = defs[8].exists ?  atof(defs[8].param) : 0.7;
-		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t , t , FLAGS_o);
+		float threshold = 0.0f;
+		if (FLAGS_r && *FLAGS_r) {
+			threshold = atof(FLAGS_r);
+		}
+		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t , threshold);
 	}
 	else if (strcmp(command, "demo") == 0) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);
+	}
+	else if (strcmp(command, "dumpw") == 0) {
+		ret = dump_weight( FLAGS_w, FLAGS_o);
 	}
 	else if (strcmp(command, "wconv") == 0) {
 		CNNNetwork network;

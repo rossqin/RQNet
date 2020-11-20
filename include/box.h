@@ -15,3 +15,5 @@ float BoxIntersection(const Box& A, const Box& B);
 float BoxUnion(const Box& A, const Box& B);
 float BoxIoU(const Box& A, const Box& B);
 float BoxRMSE(const Box& A, const Box& B);
+float BoxIoUEx(const Box& A, const Box& B);
+

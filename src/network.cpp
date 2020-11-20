@@ -20,6 +20,10 @@ CNNNetwork::CNNNetwork() {
 	cur_iteration = 0;
 	detection_layers = 2;
 	current_training_rotates = nullptr;
+	tp50 = 0;
+	fp50 = 0;
+	tp75 = 0;
+	fp75 = 0;
 	 
 }
 
@@ -55,26 +59,13 @@ static cudnnDataType_t get_data_type(const string& str) {
  
 void CNNNetwork::AddDetectionResult(const DetectionResult & data) {
 	int index = (int)detections.size() - 1; 
-	Box box(data.x, data.y, data.w, data.h );
-	int new_x = (int)(data.x * input_width);
-	int new_y = (int)(data.y * input_height);
-
-	int old_x, old_y;
-	float threshold = 0.5f;// GetAppConfig().NMSThreshold();
+	Box box(data.x, data.y, data.w, data.h ); 
+	//float gt_iou = BoxIoU(box, gt_box);
 	while (index >= 0) {
 		DetectionResult &dr = detections[index];
 		Box box2(dr.x, dr.y, dr.w, dr.h);
-		old_x = (int)(dr.x * input_width);
-		old_y = (int)(dr.y * input_height);
-		if (((new_x - old_x) * (new_x - old_x) + (new_y - old_y) * (new_y - old_y)) < 144) {
-			if (data.confidence < dr.confidence) {
-				return;
-			}
-			dr = data;
-			return;
-		}
 		float iou = BoxIoU(box, box2);
-		if (iou > threshold) {
+		if ( iou > GetAppConfig().NMSThreshold() ) {
 			if (data.confidence < dr.confidence) {
 				return;
 			}
@@ -159,8 +150,8 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		anchorElement = anchorElement->FirstChildElement("anchor");
 		if (anchorElement) {
 			while (anchorElement) {
-				float w = anchorElement->FloatAttribute("width", 0.0f) / 416.0f;
-				float h = anchorElement->FloatAttribute("height", 0.0f) / 416.0f;
+				float w = anchorElement->FloatAttribute("width", 0.0f) ;
+				float h = anchorElement->FloatAttribute("height", 0.0f) ;
 				if (w > 0.0 && h > 0.0) {
 					anchors.push_back(pair<float, float>(w, h));
 				}
@@ -223,9 +214,17 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	int index = 0;
 	InferenceModule* last_module = nullptr;
 	while (layerElement) {
-		Layer* layer = New Layer(layerElement,++index,this, last_module);
-		layers.push_back(layer);
-		layerElement = layerElement->NextSiblingElement();
+		Layer* layer = NULL;
+		try {
+			layer = New Layer(layerElement, ++index, this, last_module);
+			layers.push_back(layer);
+			layerElement = layerElement->NextSiblingElement();
+		}
+		catch (const char* t) {
+			cerr << "Unrecognized layer type `" << t << "`! \n";
+			return false;
+		}
+		
 	}
 	truths = New LPObjectInfos[mini_batch];
 	for (int i = 0; i < mini_batch; i++) {
@@ -239,10 +238,16 @@ Layer * CNNNetwork::GetLayer(int index) const {
 	return layers[index]; 
 }
 
-bool CNNNetwork::GetAnchor(int index, float & width, float & height) {
+bool CNNNetwork::GetAnchor(int index, float & width, float & height, bool normalized) {
 	if (index < 0 || index >(int)anchors.size()) return false;
-	width = anchors[index].first;
-	height = anchors[index].second;
+	if (normalized) {
+		width = anchors[index].first / input_width;
+		height = anchors[index].second / input_height;
+	}
+	else {
+		width = anchors[index].first;
+		height = anchors[index].second;
+	}
 	return true;
 }
 
@@ -291,19 +296,22 @@ bool CNNNetwork::Train(bool restart ) {
 	int new_width, new_height;
 	string weights_file;
 	float avg_loss = -1.0;  
+	char info[300];
 	
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
-	if(!current_training_rotates) current_training_rotates = New RotateType[mini_batch + 1];
-
- 
+	if(!current_training_rotates) current_training_rotates = New RotateType[mini_batch + 1]; 
 	while (!GetAppConfig().IsLastIteration(cur_iteration)) {
 		loss = 0.0f;
-		training_batch = 0;
-		true_positives = 0;
-		false_positives = 0;
+		output_layers = 0;
+		tp50 = 0;
+		fp50 = 0;
+		tp75 = 0;
+		fp75 = 0; 
 		cur_iteration++;
 		clock_t start_clk = clock(); 
 		int total_objects = 0;
+		sprintf_s(info, 300, " :Interation %05d:\n", cur_iteration);
+		cout << info;
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++, total_images += mini_batch) {
 			
 			current_training_files.clear();
@@ -317,40 +325,40 @@ bool CNNNetwork::Train(bool restart ) {
 			for (int i = 0; i < mini_batch; i++) {
 				total_objects += truths[i]->size();
 			}
-			if (!Forward(true)) return false; 
-			cout << endl;
+			
+			if (!Forward(true)) return false;  
 			if (!Backward()) return false;   
 		}
 		
-		loss /= training_batch;
+		loss /= output_layers;
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
 			avg_loss = avg_loss * 0.9 + loss * 0.1;
 		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
-		int total_recalls = false_positives + true_positives;
-		if (0 == total_recalls) total_recalls = 1;
+		//int r50 = tp50 + fp50;
+		int r75 = tp75 + fp75;
+		//if (0 == r50) r50 = 1;
+		if (0 == r75) r75 = 1;
 		float lr = GetAppConfig().GetCurrentLearningRate(cur_iteration);
 		 
-		float rc = true_positives * 100.0f / total_objects;
-		float pr = true_positives * 100.0f / total_recalls;
-		float ap = rc * pr * 0.01f;
-		char info[300];
-		sprintf(info, "\n >> It %05d | Loss: %.4f, Avg-Loss: %.4f, Recall: %.2f%%, Precision: %.2f%%, ", cur_iteration,
-			loss, avg_loss, rc, pr);
+		float rc = tp75 * 100.0f / total_objects;
+		float pr = tp75 * 100.0f / r75; 
+		
+		sprintf_s(info,300, "  >> Loss: %.4f, Avg-Loss: %.4f ", loss, avg_loss);
 		cout <<info <<"Rate: " << lr << ", " << (ms * 0.001) << "s, total " << total_images << " images.\n\n";
 		 
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
 			//sprintf(info, "")
 			ofs << cur_iteration << ",\t" << input_width  << ",\t" << input_height  << ",\t" <<  lr << ",\t"
-				<< fixed << setprecision(2) << loss << ",\t"  << avg_loss << ",\t" << rc << ",\t" << pr << ",\t" << ap << endl;
+				<< fixed << setprecision(4) << loss << ",\t"  << avg_loss <<  endl;
 			ofs.close();
 		}
 		
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
-		} 
+		}
 		if (GetAppConfig().GetWeightsPath(cur_iteration, weights_file)) {
 			if (weights_pool.Save(weights_file.c_str(), cur_iteration)) {
 				cout << " INFO: Save weights to `" << weights_file << "` ! \n";
@@ -365,7 +373,7 @@ bool CNNNetwork::Train(bool restart ) {
 		} 
 		if (GetAppConfig().RadmonScale(cur_iteration, new_width, new_height) &&
 			(new_width != input_width || new_height != input_width) ) {
-			cout << "Input Resizing to " << new_width << "x" << new_height << " ...\n";
+			cout << " *** Input Resizing to " << new_width << "x" << new_height << " ...\n";
 			input_width = new_width;
 			input_height = new_height;
 			input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
@@ -489,7 +497,8 @@ void DrawTruthInGrid(const cv::Mat& orig_img, int stride, const cv::Scalar& colo
 
 
 }
-static uint8_t calc_color(double temp1, double temp2, double temp3) {
+
+static uchar calc_color(double temp1, double temp2, double temp3) {
 
 	double color;
 	if (6.0 * temp3 < 1.0)
@@ -501,11 +510,13 @@ static uint8_t calc_color(double temp1, double temp2, double temp3) {
 	else
 		color = temp1;
 
-	return (uint8_t)(color * 255);
+	return (uchar)(color * 255);
 }
-void hsl2rgb(double hue, double sat, double light, uint8_t& r, uint8_t& g, uint8_t& b) {
+void hsl2rgb(double hue, double sat, double light, uchar* rgb) {
 	if (0.0 == sat) {
-		r = g = b = (uint8_t)(light * 255); 
+		rgb[0] = (uchar)(light * 255);
+		rgb[1] = rgb[0];
+		rgb[2] = rgb[0];
 		return;
 	}
 	double temp1, temp2, temp3;
@@ -519,150 +530,444 @@ void hsl2rgb(double hue, double sat, double light, uint8_t& r, uint8_t& g, uint8
 	temp3 = hue + 1.0 / 3.0;//for R, temp3=H+1.0/3.0	
 	if (temp3 > 1.0)
 		temp3 = temp3 - 1.0;
-	r = calc_color(temp1, temp2, temp3);
+	rgb[0] = calc_color(temp1, temp2, temp3);
 	temp3 = hue; //for G, temp3=H
-	g = calc_color(temp1, temp2, temp3);
+	rgb[1] = calc_color(temp1, temp2, temp3);
 	temp3 = hue - 1.0 / 3.0;//for B, temp3=H-1.0/3.0
 	if (temp3 < 0.0)
 		temp3 = temp3 + 1.0;
-	b = calc_color(temp1, temp2, temp3);
+	rgb[2] = calc_color(temp1, temp2, temp3);
 
 }
 
-bool CNNNetwork::Detect(const char* filename, float threshold, const char* output_file) {
-	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !filename)
+bool CNNNetwork::Detect(const char* path) {
+	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !path)
 		return false;
 
-	GetAppConfig().ThreshHold(threshold);
-	
-#if 0 
-	string s(filename);
-	ifstream f(replace_extension(s, ".txt"));
-	if (!f.is_open()) {
-		cerr << " Error: label image `" << s << "` does not exist!\n";
-		return false;
-	} 
+	vector<string> files;
+	struct stat s = { 0 }; 
+	string folder(path);
+	stat(path, &s);
+	if (s.st_mode & _S_IFDIR) {		
+		char c = path[folder.length() - 1];
+		if (c != '/' && c != '\\')
+			folder += SPLIT_CHAR; 
+		string search_str = folder + "*.*";
+		_finddata_t find_data;
+		intptr_t handle = _findfirst(search_str.c_str(), &find_data);
+		if (handle == -1) {
+			cerr << "Error: Failed to find first file under `" << folder.c_str() << "`!\n";
+			return false;
+		}
+		bool cont = true;
 
-	int i = 0;
-	int x, y;
-	int i_13, j_13, mod_i_13, mod_j_13;
-	int i_26, j_26, mod_i_26, mod_j_26;
- 
-	ObjectInfo truth;
-	truths[0]->clear();
-	while (getline(f, s)) { 
-		const char* ptr = s.c_str();
+		while (cont) {
+			if (0 == (find_data.attrib & _A_SUBDIR)) {
+				if (is_suffix(find_data.name, ".jpg") ||
+					is_suffix(find_data.name, ".JPG") ||
+					is_suffix(find_data.name, ".png") ||
+					is_suffix(find_data.name, ".PNG") ||
+					is_suffix(find_data.name, ".bmp") ||
+					is_suffix(find_data.name, ".BMP")
+					) {
+					files.push_back(folder + find_data.name);
+				}
+			}
+			cont = (_findnext(handle, &find_data) == 0);
+		}
+		_findclose(handle);
+
+	}
+	else
+		files.push_back(path);
+	char output_path[MAX_PATH];
+	sprintf_s(output_path, MAX_PATH, "predictions@%.2f", GetAppConfig().ThreshHold());
+	stat(output_path, &s);
+	if (0 == (s.st_mode & _S_IFDIR)) {
+		_mkdir(output_path);
+	}
+	for (auto l : layers) {
+		if (!l->FuseBatchNormModule()) {
+			cerr << " FuseBatch error @ " << l->GetName() << "! \n\n";
+			return false;
+		}
+	}
+	for (auto it : files) {
+		const char* filename = it.c_str();
+		std::cout << " Processing " << filename << " ...\n";
+		cv::Mat mat = cv::imread(filename);
+		if (mat.empty()) {
+			cerr << "\nError: Cannot load image `" << filename << "`!\n";
+			return false;
+		}
+		Image image(reinterpret_cast<uint8_t*>(mat.data), mat.cols, mat.rows, mat.channels());
+
+		if (!image.ResizeTo(input_width, input_height) ||
+			!image.PullFromGPU()) {
+			cerr << " Error: failed to resize image to " << input_width << " x " <<
+				input_height << " detection task!\n";
+			return false;
+		}
+		if (input) delete[]input;
+		input = image.GetData();
+		input_channels = image.GetChannels();
+
+		ForwardContext context = { false, false, false, nullptr };
+		detections.clear();
+		for (auto l : layers) { 
+			if (!l->Forward(context)) {
+				cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
+				input = nullptr;
+				return false;
+			}
+		}
+		input = nullptr;
+
+		int l, r, t, b;
+		cv::Mat overlay = cv::Mat::zeros(mat.size(), CV_8UC3);
 		
-		truth.class_id = get_next_int(ptr);
-		truth.x = get_next_float(ptr);
-		truth.y = get_next_float(ptr);
-		truth.w = get_next_float(ptr);
-		truth.h = get_next_float(ptr);
+		uchar rgb[3];
+		vector<cv::Scalar> colors;
+		for (int i = 0; i < (int)detections.size(); i++) { 
+			hsl2rgb(0.6 + (i + 1.0f) / detections.size() * 0.4 , 1.0, 0.5, rgb);
+			cv::Scalar color(rgb[0], rgb[1], rgb[2]);
+			colors.push_back(color);
+		}
+		unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+		shuffle(colors.begin(), colors.end(), default_random_engine(seed));
+
+		for (int i = 0; i < (int)detections.size(); i++) {
+			DetectionResult& dr = detections[i];
+			const string& name = classes[dr.class_id];
+			l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
+			r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
+			t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
+			b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
+			cv::Point ptTopLeft(l, t), ptBottomRight(r, b);
+			
+			
+			cv::rectangle(mat, ptTopLeft, ptBottomRight, colors.at(i), 1);
+			cv::rectangle(overlay, ptTopLeft, ptBottomRight, colors.at(i), -1);
+			
+			char conf_text[20];
+			if (dr.confidence == 1.0f)
+				strcpy(conf_text, "100%");
+			else {
+				sprintf(conf_text, "%.2f%%", dr.confidence * 100.0f);
+			}
+			int baseline = 0;
+			cv::Size size = cv::getTextSize( conf_text, cv::QT_FONT_NORMAL, 1.0, 2, &baseline);
+			ptTopLeft.y = ((t + b) >> 1) + (size.height >> 1);
+			ptTopLeft.x = ((l + r) >> 1) - (size.width >> 1);
+			cv::putText(mat, conf_text, ptTopLeft, cv::QT_FONT_NORMAL, 1.0, colors.at(i), 1);
+			//
+			//
+			cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] " << conf_text << endl;
+		} 
+		vector<int> params;
+		params.push_back(cv::IMWRITE_JPEG_QUALITY);
+		params.push_back(90);
+		cv::addWeighted(mat, 1.0, overlay, 0.3, 0, mat);
+		sprintf_s(output_path, MAX_PATH, "predictions@%.2f/%s", GetAppConfig().ThreshHold(), file_part(it));
  
-		x = (int)(truth.x * input_width);
-		y = (int)(truth.y * input_height);
-		i_13 = x / 32; mod_i_13 = x % 32; j_13 = y / 32; mod_j_13 = y % 32;
-		i_26 = x / 16; mod_i_26 = x % 16; j_26 = y / 16; mod_j_26 = y % 16;
-
-		cout << " The " << i << "th truth data:(" << x << ", " << y << 
-			"), object in [" << i_13 << "," << j_13 <<
-			  "] / 13x13,[" << i_26 << "," << j_26 << "] / 26x26.\n";
-		i++; 
-
-		truths[0]->push_back(truth);
+		cv::imwrite(output_path, mat, params);
 	}
-	f.close(); 
-#endif
-	cv::Mat mat = cv::imread(filename);
 
+	std::cout << " INFO: output written to predictions/!\n";
 	
-	//DrawTruthInGrid(mat, 32, cv::Scalar(40, 20, 230), truths[0]);
-	//DrawTruthInGrid(mat, 16, cv::Scalar(17, 83, 230), truths[0]);
-
-
-	if (mat.empty()) {
-		cerr << "\nError: Cannot load image `" << filename << "`!\n";
+	return true;
+}
+static bool load_truths(const char* filename, vector<ObjectInfo>& gts,int classes) {
+	gts.clear();
+	ifstream file(filename);
+	if (!file.is_open()) {
+		cerr << "Can't open label file. (This can be normal only if you use MSCOCO) \n";
+		//file_error(filename);
+		ofstream badfile("bad.list", ios::app);
+		if (badfile.is_open()) {
+			string str(filename);
+			str += "\n";
+			badfile.write(str.c_str(), str.length());
+			badfile.close();
+		}
 		return false;
 	}
-	Image image(reinterpret_cast<uint8_t*>(mat.data), mat.cols, mat.rows, mat.channels());
-	 
-	if (!image.ResizeTo(input_width, input_height) || 
-		!image.PullFromGPU()) {
-		cerr << " Error: failed to resize image to "<< input_width << " x " << 
-			input_height << " detection task!\n";
+	char line[512];
+	int i = 0;
+	ObjectInfo oi;
+	while (!file.eof()) {
+		i++;
+		file.getline(line, 512);
+		if (0 == *line) continue;
+		const char* line_str = line;
+		oi.class_id = get_next_int(line_str);
+		if (oi.class_id >= classes) {
+			cerr << "abnormal line data in " << filename << "(" << i << ")! class_id is " << oi.class_id << "!" << endl;
+			continue;
+		}
+		oi.x = get_next_float(line_str);
+		oi.y = get_next_float(line_str);
+		oi.w = get_next_float(line_str);
+		if (0 == *line_str) {
+			cerr << "abnormal line data in " << filename << "(" << i << ")!" << endl;
+			continue;
+		}
+		oi.h = get_next_float(line_str);
+		gts.push_back(oi);
+	}
+	file.close();
+	return true;
+}
+//enum PredResultType {TP,FP,TN,FN};
+struct PredictionInfo {
+	float confidence;
+	float best_iou;
+	int class_id;
+	int file_index;
+	int gt_index;
+	bool true_positive;
+	//PredResultType result;
+};
+bool compare_confidence(PredictionInfo p1, PredictionInfo p2) {
+	return p1.confidence > p2.confidence;
+}
+bool CNNNetwork::Eval() {
+	if (GetAppConfig().GetDatasetCount() == 0) {
+		cerr << " *** No dataset definitions in the configuration! *** \r\n";
+		return false;
+	}
+	if (input) delete[]input;
+	
+	for (int i = 0; i < GetAppConfig().GetDatasetCount(); i++) {
+		int total_ground_truths = 0;
+		vector<PredictionInfo> performance_data;
+		const Dataset* ds = GetAppConfig().GetDataSet(i);
+		std::cout << "  Processing dataset `" << ds->GetName() << "`...\n";
+		Image img;
+		for (size_t j = 0; j < ds->GetSize(); j++) {
+			string filename = ds->FilenameAt(j);
+			std::cout << "   Loading `" << filename << "`...\n";
+			if (!img.Load(filename.c_str(), input_channels)) {
+				cerr << "   Load failed!\n\n";
+				continue;
+			}
+			if (!img.ResizeTo(input_width, input_height, true)) {
+				cerr << "   Resize failed!\n\n";
+				continue;
+			}
+			vector<ObjectInfo> gts;
+			if (!load_truths(replace_extension(filename, ".txt"), gts, classes.size()))
+				continue;
+			total_ground_truths += gts.size();
+			img.PullFromGPU();
+			detections.clear();
+			
+			input = img.GetData();
+			if (!Forward(false)) {
+				input = nullptr;
+				return false;
+			}
+			PredictionInfo pdi;
+			unsigned int prev_predicts = performance_data.size();
+			for (int d = 0; d < detections.size(); d++) {
+				auto det = detections.at(d);				 
+				Box det_box(det.x, det.y, det.w, det.h);
+				pdi.best_iou = 0.0f;
+				pdi.gt_index  = -1;
+				pdi.class_id = -1;
+				for (int g = 0; g < gts.size(); g++) {
+					ObjectInfo& gt = gts[g];
+					Box gt_box(gt.x, gt.y, gt.w, gt.h);
+					float iou = BoxIoU(gt_box, det_box);
+					if (iou > pdi.best_iou) {
+						pdi.best_iou = iou;
+						pdi.gt_index = g; 
+					}
+				}
+				pdi.confidence = det.confidence;
+				pdi.class_id = det.class_id;
+				pdi.file_index = j;
+				pdi.true_positive = false;
+				//什么样的情况是true_positive?下面来整理一下
+				if (pdi.gt_index != -1) {
+					if (det.class_id == gts[pdi.gt_index].class_id) {
+						pdi.true_positive = pdi.best_iou > GetAppConfig().ThreshHold(); 
+					}
+					else
+						pdi.class_id = -1;
+				} 
+				for (unsigned int temp = prev_predicts ; temp < performance_data.size(); temp++) {
+					PredictionInfo& prev_p = performance_data[temp];
+					if (prev_p.gt_index == pdi.gt_index ) {
+						//对同一个gt预测的，只有iou 最大的才是tp
+						if (prev_p.best_iou > pdi.best_iou) {
+							pdi.true_positive = false;
+						}
+					}
+				}
+				performance_data.push_back(pdi);
+			}
+
+			input = nullptr;
+		}
+		// 按confidence从大到小排序
+		sort(performance_data.begin(), performance_data.end(), compare_confidence);
+		
+		// 用11点法计算mAP
+		float mAP = 0.0f;
+		for (int c = 0; c < classes.size(); c++) {
+			vector< pair<float, float> >prs;
+			float acc_TP = 0.0f, acc_FP = 0.0f;
+			float max_p = 0.0f, cur_base = 0.0f, best_p = 0.0f, avr_iou = 0.0f;
+			float r;
+			for (auto pdi : performance_data) {
+				if(pdi.class_id != c ) continue;
+				if (pdi.true_positive) {
+					acc_TP += 1.0f;
+					avr_iou += pdi.best_iou;
+				}
+				else
+					acc_FP += 1.0f;
+				float p = acc_TP / (acc_TP + acc_FP);
+				r = acc_TP / total_ground_truths;				
+				if (r - cur_base > 0.1f) {
+					prs.push_back(make_pair(cur_base,best_p ));
+					cur_base += 0.1f;
+					best_p = 0.0f;
+				}
+				else 
+					if (p > best_p) best_p = p;
+			}
+			//if (r != cur_base) {
+			prs.push_back(make_pair(cur_base, best_p));
+			//}
+			cout << "AP for " << classes[c].c_str() << " @ Threshold "<< fixed << setprecision(2) 
+				<< GetAppConfig().ThreshHold() <<": \n  ";
+			float ap = 0.0f;
+			for (auto pr : prs) {
+				cout << setprecision(2) << pr.first << "(" << setprecision(6) << pr.second << ") ";
+				ap += pr.second;
+			}
+			ap /= 0.11f;
+			avr_iou /= (acc_TP > 0)? acc_TP : 1.0f;
+			cout << "\n - " << fixed << setprecision(2) << ap  << "%, average iou:" << 
+				setprecision(4) << avr_iou<< endl;
+			mAP += ap;
+		}
+		mAP /= classes.size();
+		cout << "\n *** mAP is " << setprecision(2) <<  mAP << "%"<<  endl;
+	}
+	return true;
+}
+bool CNNNetwork::Eval_old() { 
+	
+	if (GetAppConfig().GetDatasetCount() == 0) {
+		cerr << " *** No dataset definitions in the configuration! *** \r\n";
 		return false;
 	} 
 	if (input) delete[]input;
-	input = image.GetData();
-	input_channels = image.GetChannels(); 
+	vector<ObjectInfo> gts;
+	string filename(name);
+	filename += ".test.results.csv";
+	ofstream of(filename.c_str(),ios::trunc);
+	of << "Threshold, Avg IoU, Avg Conf, R@.5IoU, P@.5IoU, R@.75IoU, P@0.75IoU\n";
+	for (int i = 0; i < GetAppConfig().GetDatasetCount(); i++) { 
+		const Dataset* ds = GetAppConfig().GetDataSet(i);
+		int total_ground_truths = 0;
+		int total_recall50[10],total_recall75[10],total_predictions[10];
+		float total_iou[10],total_conf[10];
+		memset(total_recall50, 0, sizeof(int) * 10);
+		memset(total_recall75, 0, sizeof(int) * 10);
+		memset(total_predictions, 0, sizeof(int) * 10);
+		memset(total_iou, 0, sizeof(float) * 10);
+		memset(total_conf, 0, sizeof(float) * 10);
 
-	ForwardContext context = { false, false, false, nullptr};
-	detections.clear();
-	for (int i = 0; i < (int)layers.size(); i++) {
-		Layer* l = layers[i];
- 
-		if(!l->FuseBatchNormModule()){
-			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n"; 
-			input = nullptr;
-			return false;
+		std::cout << "  Processing dataset `" << ds->GetName() << "`...\n";
+		Image img;
+
+		
+		of << ds->GetName().c_str() << ",,,,,,\n" << fixed << setprecision(4);
+		
+		for (size_t j = 0; j < ds->GetSize(); j++) {
+			string filename = ds->FilenameAt(j);
+			std::cout << "   Loading `" << filename << "`...\n";
+			if (!img.Load(filename.c_str(), input_channels)) {
+				cerr << "   Load failed!\n\n";
+				continue;
+			}
+			if (!img.ResizeTo(input_width, input_height, true)) {
+				cerr << "   Resize failed!\n\n";
+				continue;
+			}
+			if (!load_truths(replace_extension(filename, ".txt"), gts, classes.size()))
+				continue;
+			total_ground_truths += gts.size();
+			img.PullFromGPU();
+			
+			int index = 0;
+			for (float th = 0.5; th < 1.0f; th += 0.05,index ++) {
+				detections.clear();
+				input = img.GetData();
+				GetAppConfig().ThreshHold(th);
+				if (!Forward(false)) return false;
+				input = nullptr;
+				int recall_50 = 0, recall_75 = 0, t_i = 0;
+				total_predictions[index] += detections.size();
+				CpuPtr<float> ious(detections.size());
+				CpuPtr<int> hits(gts.size());
+				for (auto it = gts.begin(); it != gts.end(); it++, t_i++) {
+					Box gt_box(it->x, it->y, it->w, it->h);
+					float best_iou = 0.0f;
+					int best_index = -1;
+					for (int d = 0; d < detections.size(); d++) {
+						auto det = detections.at(d);
+						if (det.class_id != (int)it->class_id) continue;
+						Box det_box(det.x, det.y, det.w, det.h);
+						float iou = BoxIoU(gt_box, det_box);
+						if (iou > best_iou) {
+							best_iou = iou;
+							best_index = d;
+						}
+					}
+					if (-1 == best_index) continue;// not recalled
+					if (ious.ptr[best_index] != 0.0f) {
+						// 1 detection refers to more than 1 gt
+						if (ious.ptr[best_index] > best_iou) continue; // previous gt has better iou
+						for (int t = 0; t < hits.Length(); t++) {
+							if (hits.ptr[t] + 1 == best_index)
+								hits.ptr[t] = 0;
+						}
+						ious.ptr[best_index] = best_iou;
+						hits.ptr[t_i] = best_index + 1;
+					}
+					else
+						ious.ptr[best_index] = best_iou;
+				}
+				for (int n = 0; n < ious.Length(); n++) {
+					if (ious.ptr[n] >= 0.75f) {
+						recall_75++;
+					}
+					if (ious.ptr[n] >= 0.5f) {
+						recall_50++;
+						total_iou[index] += ious.ptr[n];
+						total_conf[index] += detections.at(n).confidence;
+					}
+				}
+				total_recall50[index] += recall_50;
+				total_recall75[index] += recall_75;
+			}
+		}
+		int index = 0;
+		for (float th = 0.5f; th < 1.0f; th += 0.05f, index++) {
+			float r50 = total_recall50[index] * 100.0f / total_ground_truths;
+			float r75 = total_recall75[index] * 100.0f / total_ground_truths;
+			float p50 = total_recall50[index] * 100.0f / total_predictions[index];
+			float p75 = total_recall75[index] * 100.0f / total_predictions[index];
+			float avg_iou = total_iou[index] / total_ground_truths;
+			float avg_conf = total_conf[index] / total_ground_truths;
+			of << th << ", " << avg_iou << ", " << avg_conf << ", " << r50 << ", " << p50 << ", " << r75 << ", " << p75 << "\n";
 		} 
-		if (!l->Forward(context)) {
-			cerr << " Error: Forward failed in  " << l->GetName() << "!\n"; 
-			input = nullptr;
-			return false;
-		}
 	}
-	input = nullptr;
- 
-	int l, r, t, b;
-	
-	uint8_t cr, cg, cb;
-	for (int i = 0; i < (int)detections.size(); i++) {
-		DetectionResult& dr = detections[i];
-
-		const string& name = classes[dr.class_id];
-		char conf_text[20];
-		if (dr.confidence == 1.0f)
-			strcpy(conf_text, ": 100%");
-		else {
-			sprintf(conf_text, ": %.2f%%", dr.confidence * 100.0f);
-		}
-		l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
-		r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
-		t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
-		b = (int)((dr.y + dr.h * 0.5f) * mat.rows); 
-#if 0
-		int cx = (int)(dr.x * mat.cols);
-		int cy = (int)(dr.y * mat.rows);
-		cv::Point pt(cx, cy);
-		cv::circle(mat, pt, 4, color, 3);
-#else
-		if (classes.size() > 1) {
-			hsl2rgb((double)(dr.class_id + 1) / (double)classes.size(), dr.confidence, 0.5, cr, cg, cb);
-		}
-		else {
-			hsl2rgb( dr.confidence,1.0, 0.5, cr, cg, cb);
-		}
-		cv::Scalar color(cb,cg,cr);
-		cv::Point ptTopLeft(l, t),  ptBottomRight(r, b);
-		cv::rectangle(mat, ptTopLeft, ptBottomRight, color, 2);  
-		ptTopLeft.y -= 15;
-		//cv::putText(mat, name + conf_text, ptTopLeft, cv::FONT_HERSHEY_COMPLEX, 0.8, color, 2);
-		//int baseline = 0;
-		//cv::Size size =  cv::getTextSize(name + conf_text, cv::FONT_HERSHEY_COMPLEX, 0.8, 2, &baseline);
-
-#endif
-		std::cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] "  << conf_text << endl;
-	}
-	vector<int> params;
-	params.push_back(cv::IMWRITE_JPEG_QUALITY);
-	params.push_back(90);
-	if (!output_file || 0 == *output_file)
-		output_file = "predictions.jpg";
-	
-	cv::imwrite(output_file, mat, params);
-
-	std::cout << " INFO: output written to "<< output_file <<"!\n";
-	
+	of.close();
 	return true;
 }

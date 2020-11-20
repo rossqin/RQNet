@@ -10,6 +10,21 @@ class Layer;
 class CNNNetwork;
 typedef map<string, InferenceModule*> ModulePool;
 class ShortcutModule;
+struct PerfData {
+	int gt_count;		// 总共处理了多少个ground truths
+	int bg_count;
+	int gt_recall;		// 训练过程中对应的anchor的objectness > 0.5
+	float iou;			// 对于ground_truths, 全部的iou是多少
+	float object_conf;	// 和ground_truth 相关的总confidence
+	float bg_conf;		// backgound confidence 
+	float cls_conf;		// class confidence
+	float loss;
+
+	int tp_50;			// iou的标准为50%的情况下的ture positive数量
+	int fp_50;			// iou的标准为50%的情况下的false positive数量
+	int tp_75;			// iou的标准为75%的情况下的ture positive数量
+	int fp_75;			// iou的标准为50%的情况下的false positive数量
+};
 class InferenceModule {
 protected:
 	mutable int index;
@@ -20,18 +35,20 @@ protected:
 	int output_width;
 	int input_channels;
 	int output_channels; 
+	PerfData perf_data;
 	 
-	InferenceModule* logical_prev, *logical_next;
+	InferenceModule* logical_prev; 
 	Layer* layer;
 	CNNNetwork* network;
 	
 	vector<InferenceModule*> prevs;
-	void GetPrevModules(const XMLElement* element, bool add_channels = true);	 
+	virtual void GetPrevModules(const XMLElement* element, bool add_channels = true);	 
 	virtual bool Resize(int w, int h) = 0;
 	bool PrepareShortcutDelta();
 	void WritePorts(ofstream& xml) const;
 	char* cached_input ;
 	char* cached_output;
+	static InferenceModule* last_parsing;
 	friend class ShortcutModule;
 public:
 	string name;
@@ -40,7 +57,7 @@ public:
 	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	virtual ~InferenceModule();
 	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev);
-	inline const char* Precision() const { return (input.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
+	inline const char* Precision() const { return (output.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	inline int GetOutputChannels() const { return output_channels; }
 	bool UpdateShortcutDelta(const CudaTensor& delta);
 	virtual bool Forward(ForwardContext& context) ;
@@ -75,6 +92,7 @@ protected:
 	int stride_h;
 	int dilation_w;
 	int dilation_h;
+	int groups;
 
 	size_t workspace_size;
 	
@@ -193,6 +211,7 @@ public:
 	~ShortcutModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
+	virtual void GetPrevModules(const XMLElement* element, bool add_channels = true);
 	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const { return 0; }
 };

@@ -35,7 +35,10 @@ static bool ImagePostLoad(Image& image,  ImageLabelParseInfo& info) {
 	}
  
 	//post_load_rot[rot_index] = random_gen() % ROTATE_TYPE_COUNT;
-	info.rotate = (RotateType)(random_gen() % ROTATE_TYPE_COUNT);
+	//info.rotate =  (RotateType)(random_gen() % ROTATE_TYPE_COUNT);
+	//if (info.rotate == ToLeft || info.rotate == ToRight)
+		info.rotate = NotRotate;
+	//旋转这块有点问题，暂时不旋转了 @2020.10.22
 	//cout << post_load_rot[rot_index];
  
 	//if (++rot_index >= 16) rot_index = 0;
@@ -330,6 +333,7 @@ static void load_image_in_thread(ImageLoadThreadParams* p) {
 bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int channels, int mini_batch,
 	int width, int height, int classes, vector<string>* records, RotateType* rotate_infos) {
 	const Dataset* ds = GetAppConfig().GetDataSet();
+	if (!ds) return false;
 	int image_size = channels * width * height;
  
 	const char* filename;

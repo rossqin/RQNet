@@ -3,7 +3,6 @@
 #include "param_pool.h"
 #include "config.h"
 
-
 ParamPool::~ParamPool() {
 	if (release_mem) {
 		for (auto e : params) {
@@ -44,17 +43,68 @@ bool ParamPool::Load(const char * filename) {
 		}
 		//TODO: check datatype
 		total_read += read_length;
-		auto it = params.find(name);
+#if 0		
+		  bool discarded = false;
+		if (name.substr(0, 7) == "layer01") {
+			name.replace(0, 7, "stage-0101");
+		}
+		else if (name.substr(0, 7) == "layer03") {
+			name.replace(0, 7, "stage-0201");
+		}
+		else if (name.substr(0, 7) == "layer05") {
+			name.replace(0, 7, "stage-0401");
+		}
+		else if (name.substr(0, 7) == "layer07") {
+			name.replace(0, 7, "stage-0801");
+		}
+		else if (name.substr(0, 7) == "layer09") {
+			name.replace(0, 7, "stage-1601");
+		}
+		else if (name.substr(0, 7) == "layer11") {
+			name.replace(0, 7, "stage-3201");
+		}
+		else if (name.substr(0, 7) == "layer14") {
+			name.replace(0, 7, "stage-3202");
+		}
+		else if (name.substr(0, 7) == "layer16") {
+			name.replace(0, 7, "beforedet32");
+		}
+		else if (name.substr(0, 7) == "layer18") {
+			name.replace(0, 7, "stage-32br");
+		}
+		else if (name.substr(0, 7) == "layer20") {
+			name.replace(0, 7, "stage-16merge");
+		}
+		else if (name.substr(0, 7) == "layer21") {
+			name.replace(0, 7, "beforedet16");
+		}
+		else
+			discarded = true ;
+#endif
 		char* buf = New char[data_header.bytes];
 		f.read(buf, data_header.bytes);
 		read_length = f.gcount();
 		total_read += read_length;
-		
+#if 0
+		if (discarded) {
+			delete[]buf;
+			continue;
+		}
+#endif
+		auto it = params.find(name);
 		if (it != params.end()) {
 			it->second->Push(buf, data_header); 
 		}
 		else { 
-			cerr << " Error: Loading parameter `" << name << "` failed. ignored.\n";
+			CudaTensor* tensor = new CudaTensor(data_header.data_type, header.tensor_order);
+			if (header.tensor_order == CUDNN_TENSOR_NCHW)
+				tensor->Init(data_header.dims[0], data_header.dims[1], data_header.dims[2], data_header.dims[3]);
+			else
+				tensor->Init(data_header.dims[0], data_header.dims[3], data_header.dims[1], data_header.dims[2]);
+			//CUDNN_TENSOR_NHWC
+			tensor->Push(buf, data_header);
+			params.insert(pair<string, CudaTensor*>(name, tensor));
+			cout << " Hint: Loading parameter `" << name << "` failed. Added.\n";
 		}
 		delete[]buf;
 	}  
@@ -487,4 +537,67 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 	return r;
 }
 
+bool ParamPool::DumpAsExcels(const char* output_dir) const {
+
+	if (!make_sure_dir_exists(output_dir)) {
+		cerr << "Failed to create folder `" << output_dir << "` !\n";
+		return false;
+	}
+	string outputdir_with_slash(output_dir);
+	if (outputdir_with_slash.find_last_of('/') != outputdir_with_slash.length() &&
+		outputdir_with_slash.find_last_of('\\') != outputdir_with_slash.length())
+		outputdir_with_slash += SPLIT_CHAR;
  
+	for (auto it = params.begin(); it != params.end(); it++) {
+		CudaTensor* tensor = it->second;
+		cudnnDataType_t fmt = tensor->DataType();
+		if (fmt != CUDNN_DATA_FLOAT && fmt != CUDNN_DATA_HALF ) {
+			cerr << "Only Support CUDNN_DATA_FLOAT and CUDNN_DATA_HALF! \n";
+			return false;
+		} 		
+		CpuPtr<char> ptr(tensor->Bytes(), tensor->Data());
+		float* dataf = reinterpret_cast<float*>(ptr.ptr);
+		half* datah = reinterpret_cast<half*>(ptr.ptr);
+		char full_path[MAX_PATH];
+		char buff[20];
+		string cell_content;
+		sprintf_s(full_path, MAX_PATH, "%s%s.csv", outputdir_with_slash.c_str(), it->first.c_str());
+		//BasicExcel wb;
+		//wb.Create(1);
+		ofstream csvf;
+		csvf.open(full_path, ios::out | ios::trunc);
+		//BasicExcelWorksheet* sheet = wb.GetWorksheet((size_t)0);
+		for (int b = 0; b < tensor->Batch(); b++) { 	
+			
+			for (int i = 0; i < tensor->Channel(); i++) { 
+				cell_content = "\"";
+				for (int j = 0; j < tensor->Height(); j++) {
+					for (int k = 0; k < tensor->Width(); k++) {
+						if (CUDNN_DATA_FLOAT == fmt) {
+							sprintf_s(buff, 20, "%.6f", *dataf);
+							//sheet->Cell(i * tensor->Height() + j, k)->SetDouble();
+							dataf++;
+						}
+						else {
+							sprintf_s(buff, 20, "%.6f", (float)*datah);
+							//sheet->Cell(i * tensor->Height() + j, k)->SetDouble(*datah);
+							datah ++;
+						}
+						cell_content += buff;
+						if (k < tensor->Width() - 1) cell_content += ",";
+					}
+					if (j < tensor->Height() - 1) cell_content += "\n";
+				}
+				cell_content += "\",";
+				csvf.write(cell_content.c_str(), cell_content.length());
+
+				//sheet->Cell(b, i)->SetString(cell_content.c_str());				
+			}
+			csvf.write("\n", 1);
+		}
+		csvf.close();
+		cout << "Save excel file to `" << full_path << "`!\n";
+		
+	}
+	return true;
+}

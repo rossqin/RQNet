@@ -3,6 +3,7 @@
 using namespace tinyxml2; 
 
 class Dataset {
+	string name;
 	mutable vector<string> filenames;
 	vector<string> classes;
 public:
@@ -10,6 +11,7 @@ public:
 	~Dataset() {}
 	inline size_t GetSize() const { return filenames.size(); }
 	inline const string& FilenameAt(size_t i) const { return filenames[i]; }
+	inline const string& GetName() const { return name; }
 	void ShuffleFiles() const ;
 };
 struct AdamConfig {
@@ -49,10 +51,12 @@ enum ParamsUpdatePolicy {
 };
 class AppConfig {
 protected:  
-	Dataset* dataset;
+	vector<Dataset*> datasets;
+
 	int stop_interation; 
 
 	bool save_input;
+	bool neg_mining ;
 	string input_dir;
 
 	int save_weight_interval;
@@ -81,16 +85,16 @@ protected:
 	bool freeze_conv_params;
 	bool freeze_bn_params;
 	bool focal_loss;
-	bool train_bg;
 
 	ParamsUpdatePolicy update_policy;
 	AdamConfig adam_config;
 	SgdConfig sgd_config;
 	float decay;
 
+
+
 	//return dataset name
-	const char* LoadTrainingSection(XMLElement* root);
-	const char* LoadTestingSection(XMLElement* root); 
+	const char* LoadTrainingSection(XMLElement* root); 
 public :
 	
 	AppConfig();
@@ -102,13 +106,13 @@ public :
 	// 3 - demo 
 	bool Load(const char* filename, int mode = 0);
 
-	inline const Dataset* GetDataSet() const { return dataset; }	
+	
 	inline bool IsLastIteration(int i) const { return i >= stop_interation; } 
   
 	inline int  GetLastIteration() const { return stop_interation; }
 	inline bool SaveInput() const { return save_input; }
 	inline const string& SaveInputDir() const { return input_dir; }
-
+	inline bool NeedNegMining() const { return neg_mining; }
 
 	inline float GetJitter() const { return da_jitter; }
 	inline float GetSaturation() const { return da_saturation; }
@@ -132,13 +136,11 @@ public :
 	inline bool BNParamsFreezed() const { return freeze_bn_params; }
 	inline bool FocalLoss() const { return focal_loss; } 
 
-	inline bool TrainBackground() const { return train_bg; }
-
 	inline bool FastResize() const { return fast_resize; }
-	 
+	inline int GetDatasetCount() const { return datasets.size(); }
 
 	inline ParamsUpdatePolicy UpdatePolicy() const { return update_policy; }
-
+	const Dataset* GetDataSet(int i = 0) const;
 	bool RadmonScale(uint32_t it, int& new_width, int& new_height) const;
 	
 	bool GetWeightsPath(uint32_t it, string& filename) const ; 

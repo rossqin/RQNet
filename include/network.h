@@ -2,6 +2,7 @@
 #include "layer.h"
 #include "inference_module.h"
 #include "param_pool.h"
+
 #pragma pack(push)
 #pragma pack(1)
 struct ObjectInfo {
@@ -20,9 +21,9 @@ struct DetectionResult {
 	float h;
 	float class_confidence;
 	float confidence;
+	int layer_index;
 };
 class InferenceModule;
- 
 typedef vector<ObjectInfo> * LPObjectInfos;
 class CNNNetwork {
 protected:
@@ -33,13 +34,15 @@ protected:
 	float* input;
 	LPObjectInfos *truths;
 	float loss; 
-	int true_positives;
-	int false_positives;
-	int training_batch;
+	int tp50;
+	int tp75;
+	int fp50;
+	int fp75;
+	int output_layers;
 	int detection_layers;
 	vector<string> classes;
 	vector< pair<float, float> > anchors;
-	vector<Layer *> layers;
+	
 	vector<DetectionResult> detections;
 	ModulePool module_pool;
 	string def_actvation;
@@ -50,8 +53,10 @@ protected:
 	bool Forward(bool training = true);
 	bool Backward();
 	friend class InferenceModule;
+
 public:
 	int cur_iteration; 
+	vector<Layer *> layers;
 	//size_t workspace_size;
 	//void* workspace; 
 	vector<string> current_training_files;
@@ -64,15 +69,17 @@ public:
 	inline int GetInputHeight() const { return input_height; }
 	inline int GetInputWidth() const { return input_width; }
 	inline int MiniBatch() const { return mini_batch; }
-	inline void RegisterTrainingResults(  float l, int tp, int fp) {
-		training_batch ++;
+	inline void RegisterTrainingResults(  float l, int t50, int f50, int t75, int f75) {
+		output_layers ++;
 		loss += l; 
-		true_positives += tp;
-		false_positives += fp;
+		tp50 += t50;
+		fp50 += f50;
+		tp75 += t75;
+		fp75 += f75; 
 	}
 	inline float GetLoss() const { return loss; } 
 
-	inline RotateType GetRotateInfo(int b) const { return (current_training_rotates && b >= 0 && b < mini_batch) ? current_training_rotates[b] : NotRotate; }
+	//inline RotateType GetRotateInfo(int b) const { return (current_training_rotates && b >= 0 && b < mini_batch) ? current_training_rotates[b] : NotRotate; }
 
 	inline const char* Precision() const { return (data_type == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	
@@ -92,10 +99,12 @@ public:
 
 	bool Load(const char* filename, cudnnDataType_t dt = CUDNN_DATA_DOUBLE);
 	Layer* GetLayer(int index) const ;
-	bool GetAnchor(int index, float& width, float& height);
+	bool GetAnchor(int index, float& width, float& height, bool normalized = true);
 	//bool UpdateWorkspace(size_t new_size); 	
 	bool Train(bool restart);
-	bool Detect(const char* filename,float threshold, const char* output_file);
+	bool Detect(const char* path);
+	bool Eval();
+	bool Eval_old();
 	
 	bool OutputIRModel(const string& dir, const string& name, int& l_index ) const;
 	void GetAnchorsStr(string& str) const ;

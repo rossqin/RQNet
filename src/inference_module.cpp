@@ -6,7 +6,7 @@
 #include "inference_module.h"
 #include "config.h"
 const float one = 1.0f, zero = 0.0f;
- 
+InferenceModule* InferenceModule::last_parsing = nullptr;
 InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev) 
 	: input(net->DataType(), net->DataFormat()), output(net->DataType(), net->DataFormat()), 
 	shortcut_delta(net->DataType(), net->DataFormat()) {
@@ -14,7 +14,6 @@ InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork
 		index = prev->index + 1;
 	else
 		index = 1;
-
 	network = net;
 	output_port = 3;
 	layer = l;
@@ -32,8 +31,7 @@ InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork
 	cout << " INFO: Initializing " << name << " ...\n";
 	cached_input = nullptr;
 	cached_output = nullptr;
-	if(prev) prev->logical_next = this;
-	logical_next = nullptr;
+	perf_data = { 0 };
 }
 InferenceModule::~InferenceModule() { 
 	if (cached_input) delete[]cached_input;
@@ -69,7 +67,17 @@ void InferenceModule::GetPrevModules(const XMLElement* element, bool add_channel
 			}
 		}
 	}
-	else {
+	else if (last_parsing) {
+		prevs.push_back(last_parsing);
+		if (last_parsing->output_height == 0) {
+			cout << "sdsfasfd\n";
+		}
+		input_height = last_parsing->output_height;
+		input_width = last_parsing->output_width;
+		input_channels = last_parsing->output_channels;
+
+	}
+	else{
 		input_channels = network->input_channels;
 		input_width = network->input_width;
 		input_height = network->input_height;
@@ -99,7 +107,7 @@ InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Lay
 	else if (mtype == "upsample") {
 		module = New UpSampleModule(element, layer, network, prev);
 	}
-	else if (mtype == "yolo-detection") {
+	else if (mtype == "yolo-detection" || mtype == "yolo") {
 		module = New YoloModule(element, layer, network, prev);
 	}
 	else if (mtype == "shortcut") {
@@ -109,6 +117,9 @@ InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Lay
 
 	if (module)
 		network->module_pool.insert(pair<string, InferenceModule*>(module->name, module));
+	else
+		throw t;
+	last_parsing = module;
 	return module;
 }
 void InferenceModule::WritePorts(ofstream& xml) const {
@@ -151,33 +162,34 @@ bool InferenceModule::Forward(ForwardContext & context) {
 	int h = 0;
 
 	if (n == 1) { 
-		InferenceModule* module = prevs[0];
-		BatchNormModule* bn_module = dynamic_cast<BatchNormModule*>(module);
-		if (!bn_module || !bn_module->IsFused()) {
-			context.input = &(module->output);
-		}		
-		w = context.input->Width();
-		h = context.input->Height();
-		
+		InferenceModule* module = prevs[0];	 
+		context.input = &(module->output);	
+			
+		w = module->output.Width();
+		h = module->output.Height();
 	}
-	else if (n > 1) { 
+	else if (n > 1) {
+		context.input = nullptr;
 		vector<const CudaTensor*> srcs;
 		for (int i = 0; i < n; i++) {
-			if (prevs[i]->output_height > h)
-				h = prevs[i]->output_height;
-			if (prevs[i]->output_width > w)
-				w = prevs[i]->output_width;
+			if (prevs[i]->output.Height() > h)
+				h = prevs[i]->output.Height();
+			if (prevs[i]->output.Width() > w)
+				w = prevs[i]->output.Width();
 			srcs.push_back(&(prevs[i]->output));
 		} 
 		int expected_elements = network->mini_batch * network->input_channels * w * h;
 		if (w != input_width || h != input_height || input.Elements() != expected_elements) {
-			if (!input.Init(network->mini_batch, input_channels, w, h)) return false;
+			if (!input.Init(network->mini_batch, input_channels, w, h)) {
+				return false;
+			}
 		}
 		else {
 			input = 0.0f;
 		}
-		if (!input.Concat(srcs)) return false;
-		context.input = &input;
+		if (!input.Concat(srcs)) {
+			return false;
+		}
 	}
 	else { 
 		
@@ -185,18 +197,26 @@ bool InferenceModule::Forward(ForwardContext & context) {
 		h = network->input_height;
 		int expected_elements = network->mini_batch * network->input_channels * w * h;
 		if (input_width != w || input_height != h || input.Elements() != expected_elements) {
-			if (!input.Init(network->mini_batch, input_channels, w, h)) return false; 
+			if (!input.Init(network->mini_batch, input_channels, w, h)) {
+				return false;
+			}
 		}
-		if (!input.Push(network->input)) return false;
-		context.input = &input;
+		if (!input.Push(network->input)) {
+			return false;
+		}
+		context.input = nullptr;
 	}
 	if (input_width != w || input_height != h) {
-		if (!Resize(w, h)) return false; 
+		if (!Resize(w, h)) {
+			return false;
+		}
 			
 	}
 	int expected_output_elemens = network->mini_batch * output_channels * output_height * output_width;
 	if (output.Elements() != expected_output_elemens &&
-		!output.Init(network->mini_batch, output_channels, output_height, output_width)) return false;
+		!output.Init(network->mini_batch, output_channels, output_height, output_width)) {
+		return false;
+	}
  
 	return true;
 }
@@ -331,6 +351,7 @@ InferenceModule(element, l, net, prev){
 	else if (str == "tanh") mode = TANH;
 	else if (str == "loggy") mode = LOGGY;
 	else if (str == "elu") mode = ELU; 
+	else if (str == "relu6") mode = RELU6;
 	else   mode = LEAKY;  
 	GetPrevModules(element);
 	output_width = input_width;
@@ -342,8 +363,11 @@ ActivationModule::~ActivationModule() {
 }
 
 bool ActivationModule::Forward(ForwardContext & context) {
-	if (!InferenceModule::Forward(context)) return false;
-	return activate_array_ongpu(context.input->Data(), output, output.Elements(), output.DataType(), mode);
+	if (!InferenceModule::Forward(context)) return false; 
+	void* data = context.input ? context.input->Data() : input.Data();
+	bool r = activate_array_ongpu(data, output, output.Elements(), output.DataType(), mode);
+ 
+	return r;
 }
 bool ActivationModule::Backward(CudaTensor & delta) {	
 	if (!InferenceModule::Backward(delta)) return false;
@@ -401,8 +425,10 @@ bool UpSampleModule::Resize(int w,int h) {
 	return true;
 }
 bool UpSampleModule::Forward( ForwardContext & context) {
-	if (!InferenceModule::Forward(context)) return false; 
-	return context.input->UpSample(output,stride_w,stride_h); 
+	if (!InferenceModule::Forward(context)) return false;
+	CudaTensor* forwar_input = context.input ? context.input : &input;
+	bool ret = forwar_input->UpSample(output,stride_w,stride_h);
+	return ret;
 }
 
 bool UpSampleModule::Backward(CudaTensor & delta) {
@@ -468,9 +494,14 @@ bool ShortcutModule::Forward(ForwardContext & context) {
 	int n = (int)prevs.size(); 
 	if (n < 2) return false; 
 	int expected_elements = network->MiniBatch() * output_channels * output_width * output_height;
-	output = prevs[0]->output;
-	if (output.Elements() != expected_elements) return false;
-	for (int i = 1; i < n; i++) {
+	if (output.Elements() != expected_elements &&
+		!output.Init(network->MiniBatch(), output_channels, output_height, output_width)) {
+		return false;
+	}
+	else {
+		output = 0.0f;
+	}
+	for (int i = 0; i < n; i++) {
 		InferenceModule* prev = prevs[i];
 		if (prev->output.Elements() != expected_elements) {
 			return false;
@@ -499,37 +530,23 @@ bool ShortcutModule::Backward(CudaTensor & delta) {
 	return true;
 }
 
-bool ShortcutModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, 
-	size_t & bin_offset, int & l_index) const {	
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Eltwise\">" << endl;
-	xml << "      <data operation=\"sum\" />"<<endl;
-	
-	int i = 0; 
-	xml << "      <input>" << endl;
-	
-	while (i < (int)prevs.size()) {
-		InferenceModule* prev = prevs[i]; 
-		xml << "        <port id=\"" << i << "\">" << endl;
-		xml << "          <dim>1</dim>" << endl;
-		xml << "          <dim>" << prev->output_channels << "</dim>" << endl;
-		xml << "          <dim>" << prev->output_height << "</dim>" << endl;
-		xml << "          <dim>" << prev->output_width << "</dim>" << endl;
-		xml << "        </port>" << endl;
-		edges << "    <edge from-layer=\"" << prev->index << "\" from-port=\"" << prev->output_port <<
-			"\" to-layer=\"" << index << "\" to-port=\"" << i << "\"/>" << endl;
-		i++;
+bool ShortcutModule::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, int & l_index) const
+{
+	return false;
+}
+void ShortcutModule::GetPrevModules(const XMLElement* element, bool add_channels /* = true */) {
+
+	InferenceModule::GetPrevModules(element, add_channels); 
+	const char *p = element->Attribute("before"); 
+	if (!p && network->layers.size() > 0) {
+		prevs.push_back(network->layers.back()->last_module);
+// 		Layer* last_layer = nullptr;
+// 		for (unsigned int i = 0; i < network->layers.size(); i++) {
+// 			if (network->layers[i] == layer && last_layer != nullptr) {
+// 				prevs.push_back(last_layer->last_module);
+// 				break;
+// 			}
+// 			last_layer = network->layers[i];
+// 		}
 	}
-	xml << "      </input>" << endl;
-	xml << "      <output>" << endl;
- 
-	xml << "        <port id=\"" << output_port << "\">" << endl;
-	xml << "          <dim>1</dim>" << endl;
-	xml << "          <dim>" << output_channels << "</dim>" << endl;
-	xml << "          <dim>" << output_height << "</dim>" << endl;
-	xml << "          <dim>" << output_width << "</dim>" << endl;
-	xml << "        </port>" << endl;
-	xml << "      </output>" << endl;
-	 
-	xml << "    </layer>" << endl;
-	return true; 
 }

@@ -4,7 +4,6 @@
 #include "network.h"
 #include "param_pool.h"
 #include "inference_module.h"
-#include "yolo.h"
 #include <memory>
 
 ConvolutionalModule::~ConvolutionalModule() {
@@ -23,12 +22,22 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	adam_bias_m(net->DataType(), net->DataFormat()),
 	adam_bias_v(net->DataType(), net->DataFormat())
 	{
-	workspace_size = 0;
+	workspace_size = 0; 
 	conv_desc = nullptr; 
 	w_desc = nullptr;
 	output_channels = element->IntAttribute("filters", 1);
-	int width = element->IntAttribute("filter-w", 1);
-	int height = element->IntAttribute("filter-h", 1);
+	int width = 1, height = 1;
+	int sz = element->IntAttribute("size", 0);
+
+	if (sz > 0) {
+		width = height = sz;
+	}
+	else {
+		height = element->IntAttribute("filter-h", 1);
+		width = element->IntAttribute("filter-w", 1);
+	}
+	
+ 
 	bool hasBias = element->BoolAttribute("bias", false); 
 	GetPrevModules(element);
 
@@ -38,10 +47,15 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 		bias.Randomize();		 
 		network->weights_pool.Put(name + ".bias", &bias);
 	}
-
-	w.Init(output_channels, input_channels, width, height);
+	groups = element->IntAttribute("group", 1);
+ 
+	 
+		// TODO: 看一下这个groups应该放在哪里
+	w.Init(output_channels, input_channels / groups, width, height);
+	dw.Init(output_channels, input_channels / groups, width, height);
+	 
 	w.Randomize(); // in case we can't load weights
-	dw.Init(output_channels, input_channels, width, height);
+	
 	
 	network->weights_pool.Put(name + ".weights", &w);
 
@@ -52,31 +66,49 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 
 	}
 	else {
-		padding_w = 0;
-		padding_h = 0;
+		padding_w = padding_h = 0;
 	}
-	stride_w = element->IntAttribute("stride-w", 1);
-	stride_h = element->IntAttribute("stride-h", 1);
-
-	dilation_w = element->IntAttribute("dilation-w", 1);
-	dilation_h = element->IntAttribute("dilation-h", 1);
+	int stride = element->IntAttribute("stride", 0);
+	if (stride > 0) {
+		stride_w = stride_h = stride;
+	}
+	else {
+		stride_w = element->IntAttribute("stride-w", 1);
+		stride_h = element->IntAttribute("stride-h", 1);
+	}
+	
+	int dilation = element->IntAttribute("dilation", 0);
+	if (dilation > 0) {
+		dilation_w = dilation_h = dilation;
+	}
+	else {
+		dilation_w = element->IntAttribute("dilation-w", 1);
+		dilation_h = element->IntAttribute("dilation-h", 1);
+	}
 	
 	cudnnCreateFilterDescriptor(&w_desc);
 	if (w_desc) {
 		if (CUDNN_STATUS_SUCCESS != cudnnSetFilter4dDescriptor(w_desc, net->DataType(), net->DataFormat(),
-			output_channels, input_channels, height, width)) {
+			output_channels, input_channels / groups, height, width)) {
 			cudnnDestroyFilterDescriptor(w_desc);
 			w_desc = nullptr;
 		}
 	}
 	cudnnCreateConvolutionDescriptor(&conv_desc);
 	if (conv_desc) {
+		if (groups > 1) {
+			if (CUDNN_STATUS_SUCCESS != cudnnSetConvolutionGroupCount(conv_desc, groups)) {
+				cudnnDestroyConvolutionDescriptor(conv_desc);
+				conv_desc = nullptr;
+			}
+		}
 		if (CUDNN_STATUS_SUCCESS != cudnnSetConvolution2dDescriptor(conv_desc,
 			padding_h, padding_w, stride_h, stride_w, dilation_h, dilation_w,
 			CUDNN_CROSS_CORRELATION, net->DataType())) {
 			cudnnDestroyConvolutionDescriptor(conv_desc);
 			conv_desc = nullptr;
 		}
+		
 #if(CUDNN_MAJOR >= 7)
 		// Tensor Core uses CUDNN_TENSOR_OP_MATH instead of CUDNN_DEFAULT_MATH
 		// For *_ALGO_WINOGRAD_NONFUSED can be used CUDNN_DATA_FLOAT
@@ -114,11 +146,18 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	Resize(input_width, input_height); 
 }
 
-bool ConvolutionalModule::Forward(ForwardContext & context) {
- 
-	if (!InferenceModule::Forward(context)) return false;
-	float one = 1.0f, zero = 0.0f; 
-	forward_input = context.input; 
+bool ConvolutionalModule::Forward(ForwardContext & context) { 
+	if (!InferenceModule::Forward(context)) {
+		return false;
+	}
+	
+	
+	float one = 1.0f, zero = 0.0f;
+
+	if (context.input)
+		forward_input = context.input;
+	else
+		forward_input = &input;
 	CudaPtr<char> workspace(workspace_size);
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
 		forward_input->Descriptor(), forward_input->Data(), w_desc, w, conv_desc, fwd_algo,
@@ -167,8 +206,8 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 	// if(input.Elements() > 0) input.Release();
 	return DistributeDeltas(delta);
 }
-extern bool adam_update(float* theta, float* gt, float* mt, float* vt, int elements, int t, float lr,bool decay);
-extern bool sgd_update(float* weights, float* updates, int elements, float lr, bool decay);
+extern bool sgd_update(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, bool decay);
+extern bool adam_update(void* params, void* gt, void* mt, void* vt, int elements, int t, cudnnDataType_t data_type, float lr, bool decay);
 bool ConvolutionalModule::UpdateParams(float lr) {
 
 	AppConfig& cfg = GetAppConfig();
@@ -176,102 +215,27 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 		dw = 0.0f;
 		dbias = 0.0f;
 		return true;
-	}
-	lr /= cfg.GetBatch();
-	int t = network->cur_iteration;
+	} 
 	switch (cfg.UpdatePolicy()) {
 	case SGD:
-	if(network->DataType() == CUDNN_DATA_FLOAT) { 
-		float* weights, *updates;
+	{ 
+
 		if (bias.Channel() == output_channels) {
-			weights = reinterpret_cast<float*>(bias.Data());
-			updates = reinterpret_cast<float*>(dbias.Data());
-			if (!sgd_update(weights, updates, output_channels, lr, false)) return false;
+			if (!sgd_update(bias, dbias, output_channels, bias.DataType(), lr, false)) return false;
 
 		}
-		weights = reinterpret_cast<float*>(w.Data());
-		updates = reinterpret_cast<float*>(dw.Data());
-		return sgd_update(weights, updates, w.Elements(),  lr, true);
+		return sgd_update(w, dw, w.Elements(), w.DataType(), lr, true);
 
 	}
-	else {
-		CudaPtr<float> weights(w.Elements());
-		CudaPtr<float> updates(w.Elements());
-		__half* h_w, *h_u;
-		if (bias.Channel() == output_channels) {
-			h_w = reinterpret_cast<__half*>(bias.Data());
-			h_u = reinterpret_cast<__half*>(dbias.Data());
-			if (!f16_to_f32(weights, h_w, output_channels) ||
-				!f16_to_f32(updates, h_u, output_channels)) return false;
-			if (!sgd_update(weights, updates, output_channels, lr, false)) return false;
-			if (!f32_to_f16(h_w, weights, output_channels) ||
-				!f32_to_f16(h_u, updates, output_channels)) return false;
-
-		}
-		h_w = reinterpret_cast<__half*>(w.Data());
-		h_u = reinterpret_cast<__half*>(dw.Data());
-		if (!f16_to_f32(weights, h_w, w.Elements()) ||
-			!f16_to_f32(updates, h_u, w.Elements())) return false;
-		if (!sgd_update(weights, updates, w.Elements(), lr, true)) return false;
-		return (f32_to_f16(h_w, weights, w.Elements()) && 
-			f32_to_f16(h_u, updates, w.Elements())) ;
-	}
-	break;
 	case Adam: 
-	if (network->DataType() == CUDNN_DATA_FLOAT) {
+	{
 		int t = network->cur_iteration;
-		float *theta, *gt, *mt, *vt;
 		if (bias.Channel() == output_channels) {
-			theta = reinterpret_cast<float*>(bias.Data());
-			gt = reinterpret_cast<float*>(dbias.Data());
-			mt = reinterpret_cast<float*>(adam_bias_m.Data());
-			vt = reinterpret_cast<float*>(adam_bias_v.Data()); 
-			if (!adam_update(theta, gt, mt, vt, bias.Elements(), t, lr, true)) return false;
+			int t = network->cur_iteration;
+			if (!adam_update(bias, dbias, adam_bias_m, adam_bias_v, bias.Elements(), t, bias.DataType(), lr, false)) return false;
 		}
-		theta = reinterpret_cast<float*>(w.Data());
-		gt = reinterpret_cast<float*>(dw.Data());
-		mt = reinterpret_cast<float*>(adam_m.Data());
-		vt = reinterpret_cast<float*>(adam_v.Data());
-		return adam_update(theta, gt, mt, vt, w.Elements(), t, lr,true);
+		return adam_update(w, dw, adam_m, adam_v, w.Elements(), t, w.DataType(), lr, true);
 	}
-	else {
-		CudaPtr<float> theta(w.Elements()), gt(w.Elements()), mt(w.Elements()), vt(w.Elements());
-		__half *h_theta, *h_gt, *h_mt, *h_vt;
-
-		if (bias.Channel() == output_channels) {			
-			h_theta = reinterpret_cast<__half*>(bias.Data());
-			h_gt = reinterpret_cast<__half*>(dbias.Data());
-			h_mt = reinterpret_cast<__half*>(adam_bias_m.Data());
-			h_vt = reinterpret_cast<__half*>(adam_bias_v.Data());
-
-			if (!f16_to_f32(theta, h_theta, bias.Elements()) ||
-				!f16_to_f32(gt, h_gt, bias.Elements()) ||
-				!f16_to_f32(mt, h_mt, bias.Elements()) ||
-				!f16_to_f32(vt, h_vt, bias.Elements())) return false;
-
-			if (!adam_update(theta, gt, mt, vt, bias.Elements(), t, lr, false)) return false;
-			if (!f32_to_f16(h_theta, theta, bias.Elements()) ||
-				!f32_to_f16(h_mt, mt, bias.Elements()) ||
-				!f32_to_f16(h_vt, vt, bias.Elements())) return false;
-		}
-		h_theta = reinterpret_cast<__half*>(w.Data());
-		h_gt = reinterpret_cast<__half*>(dw.Data());
-		h_mt = reinterpret_cast<__half*>(adam_m.Data());
-		h_vt = reinterpret_cast<__half*>(adam_v.Data());
-
-		if (!f16_to_f32(theta, h_theta, w.Elements()) ||
-			!f16_to_f32(gt, h_gt, w.Elements()) ||
-			!f16_to_f32(mt, h_mt, w.Elements()) ||
-			!f16_to_f32(vt, h_vt, w.Elements())) return false;
-
-		if (!adam_update(theta, gt, mt, vt, w.Elements(), t, lr, true)) return false;
-		return (f32_to_f16(h_theta, theta, w.Elements()) &&
-			f32_to_f16(h_mt, mt, w.Elements()) &&
-			f32_to_f16(h_vt, vt, w.Elements())) ;
-
-
-	}
-	break;
 	default:
 		return true;
 	}
@@ -301,20 +265,24 @@ bool ConvolutionalModule::Resize(int w, int h) {
 
 
 	int c;
-	if (CUDNN_STATUS_SUCCESS != cudnnGetConvolution2dForwardOutputDim(conv_desc, x_desc, w_desc, &b, &c, &output_height, &output_width))
+	cudnnStatus_t err = cudnnGetConvolution2dForwardOutputDim(conv_desc, x_desc, w_desc, &b, &c, &output_height, &output_width);
+
+	if (CUDNN_STATUS_SUCCESS != err)
 		return false;
 	//TODO: assert(c == output_channels)
 	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(y_desc, output.DataFormat(), output.DataType(), b, output_channels, output_height, output_width))
 		return false;
 
 	cudnnHandle_t handle = GetCUDNNHandle();
+#if(CUDNN_MAJOR <= 7)
 	cudnnGetConvolutionForwardAlgorithm(handle, x_desc, w_desc,
 		conv_desc, y_desc, CUDNN_CONVOLUTION_FWD_PREFER_FASTEST, 0, &fwd_algo);
 	cudnnGetConvolutionBackwardDataAlgorithm(handle, w_desc, y_desc,
 		conv_desc, x_desc, CUDNN_CONVOLUTION_BWD_DATA_PREFER_FASTEST, 0, &bwdd_algo);
 	cudnnGetConvolutionBackwardFilterAlgorithm(handle, x_desc,
 		y_desc, conv_desc, w_desc, CUDNN_CONVOLUTION_BWD_FILTER_PREFER_FASTEST, 0, &bwdf_algo);
-
+#endif
+	//*****/
 	size_t w1 = 0, w2 = 0, w3 = 0;
 	cudnnGetConvolutionForwardWorkspaceSize(handle, x_desc, w_desc, conv_desc, y_desc, fwd_algo, &w1);
 	cudnnGetConvolutionBackwardDataWorkspaceSize(handle, w_desc, y_desc, conv_desc, x_desc, bwdd_algo, &w2);
@@ -343,21 +311,19 @@ group equals number of output feature maps denotes depth-wise separable convolut
 */
 bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const {
 	
-	int oc = output_channels;
 
 	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset,l_index)) return false;
 	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Convolution\">" << endl;
 	xml << "      <data auto_pad=\"same_upper\" dilations=\"" << dilation_h << "," << dilation_w
-		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << oc
+		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << output_channels
 		<< "\" pads_begin=\"" << padding_h << "," << padding_w << "\" pads_end=\"" << padding_h << "," << padding_w
 		<< "\" strides=\"" << stride_h << "," << stride_w << "\"/>" << endl;
 	WritePorts(xml);
 	xml << "      <blobs>" << endl;
+ 
 	
-		// check follow 
-
 	CpuPtr<char> w_cpu(w.Bytes(), w.Data());
-	CpuPtr<char> bias_cpu(bias.Bytes(), bias.Data());
+	CpuPtr<char> bias_cpu(bias.Bytes(), bias.Data()); 
 	if (prevs.size() == 0) {
 		// the first module, we need to divide 255
 		if (w.DataType() == CUDNN_DATA_FLOAT) {
@@ -369,24 +335,14 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 		else {
 			__half* ph = reinterpret_cast<__half*>(w_cpu.ptr);
 			float t;
-			for (int i = 0; i < w.Elements(); i++) {
-				t = __half2float(ph[i]) / 255.0f;
-				ph[i] = __float2half(t);
+			for (int i = 0; i < w.Elements(); i++) { 
+				t = __half2float(ph[i]) / 255.0f;				
+				ph[i] = __float2half(t) ;
 			}
 
 		}
-	} 
-	bin.write(w_cpu.ptr, w.Bytes());
-
-	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << w.Bytes() << "\" />" << endl;
-	bin_offset += w.Bytes();
-
-	bin.write(bias_cpu.ptr, bias.Bytes());
-	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << bias.Bytes() << "\" />" << endl;
-	bin_offset += bias.Bytes();
-	 
-		
-	 
+	}
+	
 // 	float *display = reinterpret_cast<float*>(w_cpu.ptr);
 // 	__half temp;
 // 	char line[100];
@@ -406,7 +362,13 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	Weights layout is GOIYX (GOIZYX for 3D convolution),
 	which means that X is changing the fastest, then Y, then Input, Output, then Group.
 	*/
-	
+	bin.write(w_cpu.ptr, w.Bytes());
+	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << w.Bytes() << "\" />" << endl;
+	bin_offset += w.Bytes();
+
+	bin.write(bias_cpu.ptr, bias.Bytes());
+	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << bias.Bytes() << "\" />" << endl;
+	bin_offset += bias.Bytes();
 
 	xml << "      </blobs>" << endl;
 	xml << "    </layer>" << endl;
@@ -414,5 +376,5 @@ bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstre
 	return true;
 }
 uint32_t ConvolutionalModule::GetFlops() const {
-	return input_width * input_height * input_channels * output_channels * w.Height() * w.Width();
+	return 0;
 }

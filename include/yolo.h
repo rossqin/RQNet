@@ -2,6 +2,7 @@
 #include "inference_module.h"
 #pragma pack(push)
 #pragma pack(1)
+/*
 struct YoloTargetLabel {
 	float x;
 	float y;
@@ -10,7 +11,7 @@ struct YoloTargetLabel {
 	float probility;
 	float class_ids[1];
 };
-
+*/
 #pragma pack(pop) 
 struct AnchorBoxItem {
 	float width;
@@ -23,40 +24,39 @@ struct ObjectInfo;
 struct TruthInLayer {
 	
 	int cell_x; // 本格子的 x坐标
-	int cell_y; // 本个字的 y坐标
+	int cell_y; // 本格子的 y坐标
 	float x_offset;
 	float y_offset;
-	int best_anchor_index; // in layer
-	float best_anchor_width;
-	float best_anchor_height;
+	float best_iou;
+	int best_anchor;  //最佳的预测框
 
-	int best_recall_x;
-	int best_recall_y;
-	int best_recall_anchor;
-	//int cur_pred_x;
-	//int cur_pred_y;
-	//int cur_anchor_index;
-
-	int class_id;
-	int recalls; 
+	int class_id; 
 	Box box;
-	const ObjectInfo* original;  // 在标记文件中的框框，主要用来报告错误用
-	float best_iou;// 可能没什么用 
+	int orig_index;// 在标记文件中的框框，主要用来报告错误用 
+	
 };
 
 class YoloModule : public InferenceModule {
 protected:
-	int cells_count;
+	struct AnchorLoc {	
+		int x;
+		int y;
+		int a;
+	};
+	bool train_bg;
+	int cells_count; 
+	vector<TruthInLayer> gts; 
 	string mask_anchor_str;
 	vector<AnchorBoxItem> masked_anchors; 
-	int EntryIndex(int anchor, int loc, int entry); 
+	vector<AnchorLoc> bg_anchors;
 	bool Resize(int w, int h);
 	bool Detect(); 
-	void DeltaClass(float* output, float* delta, int cls_index, int class_id, float* p_class_conf = nullptr);
-	float DeltaTruth(const TruthInLayer& truth, float* o, float* d, int cells, RotateType rt, 
-		float& object_conf, float& class_conf, int& class_identified);
+	void DeltaClass(float* output, float* delta, int cls_index, int class_id); 
 	bool CalcDelta();
-	//bool RescueMissTruth(TruthInLayer& missT, CpuPtr<int>& truth_map, int miss_truth_index, RotateType rt);
+	bool ResolveGTs(int batch, int& cfl_t_count);
+	void CalcBgAnchors();
+	int EntryIndex(int x, int y, int a, int channel);
+	void UpdateDetectPerfs(float* output_cpu, vector<DetectionResult>& results);
 public:
 	YoloModule(const XMLElement* element, Layer* l, CNNNetwork* network, InferenceModule* prev);
 	~YoloModule();

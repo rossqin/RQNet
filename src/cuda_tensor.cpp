@@ -271,7 +271,9 @@ bool CudaTensor::Concat(const vector<const CudaTensor*>& src) {
 		char* dest_mem = BatchData(i);
 		for (int j = 0; j < (int)src.size(); j++) {
 			const CudaTensor* s = src[j];
-			if (h != s->h || w != s->w) return false;
+			if (h != s->h || w != s->w) {
+				return false;
+			}
 			char *src_mem = s->BatchData(i);
 			int copy_bytes = s->Elements3D() * s->byte_per_element;
 			if (cudaSuccess != cudaMemcpy(dest_mem, src_mem, copy_bytes, cudaMemcpyDeviceToDevice)) return false;
@@ -325,9 +327,13 @@ bool CudaTensor::Release() {
 bool CudaTensor::Randomize() {
 	if (elements == 0) return true;
 	unique_ptr<float> ptr( New float[elements]);
+	uniform_real_distribution<double> uniform(0, 1.0f / elements);
+	default_random_engine engine;
+	engine.seed(chrono::system_clock::now().time_since_epoch().count());
+
 	float* buffer = ptr.get();
 	for (int i = 0; i < elements; i++) {
-		buffer[i] = rand_uniform_strong(-0.5, 0.5);
+		buffer[i] = uniform(engine);
 	}
 	if (data_type == CUDNN_DATA_FLOAT) {
 		return (cudaSuccess == cudaMemcpy(gpu_data, buffer, bytes, cudaMemcpyHostToDevice));

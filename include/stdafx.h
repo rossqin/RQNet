@@ -23,6 +23,10 @@
 #include <chrono>
 #include <random>
 
+#include <io.h>
+#include <sys/stat.h>
+#include <direct.h>
+
 #ifdef _WIN32 
 #pragma warning (disable:4819 4244)
 #include <Windows.h>
@@ -82,6 +86,7 @@ const char* get_dir_from_full_path(string& path);
 void upper(string& str);
 const char* file_part(const string& path);
 float focal_loss_delta(float pred, float alpha = 0.5f, float gamma = 4.0f);
+bool make_sure_dir_exists(const char* path);
 #define FULL_DEBUGGING 1
 #define DEBUGGING_DIR "\\AI\\Data\\debugging\\RQNet\\"
 

@@ -2,9 +2,6 @@
 #include "cuda_tensor.h"
 #include "config.h" 
 
-#include <io.h>
-#include <sys/stat.h>
-#include <direct.h>
 
 AppConfig theConfig;
 AppConfig& GetAppConfig() {
@@ -22,6 +19,7 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 
 	freeze_conv_params = te->BoolAttribute("freeze-conv"); 
 	freeze_bn_params = te->BoolAttribute("freeze-batchnorm");
+	neg_mining = te->BoolAttribute("hard-negative-mining");
 
 	const char* dataset_name = te->GetText("dataset");
 	te->QueryIntText("termination", stop_interation);
@@ -38,8 +36,6 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	te->QueryFloatText("data-augment/hue", da_hue);
 	te->QueryIntText("batch", batch);
 	te->QueryIntText("subdivision", subdivision);
-
-	te->QueryBoolText("train-background", train_bg);
 	
 
 	string str;
@@ -57,7 +53,6 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	}
 	if (update_policy == SGD) {
 		te->QueryFloatText("learning-rate/base", sgd_config.base_rate);
-		
 		te->QueryIntText("learning-rate/burn-in", sgd_config.burnin);
 		te->QueryFloatText("learning-rate/power", sgd_config.power);
 		te->QueryFloatText("learning-rate/scale", sgd_config.scale);
@@ -115,12 +110,8 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	}
 	return dataset_name;
 }
-const char * AppConfig::LoadTestingSection(XMLElement * root) {
-	return nullptr;
-}
  
 AppConfig::AppConfig() {
-	dataset = nullptr;
 	stop_interation = 500000;
 	focal_loss = true;
 
@@ -149,20 +140,23 @@ AppConfig::AppConfig() {
 	freeze_conv_params = false;
 	freeze_bn_params = false; 
 
-	fast_resize = false; 
+	fast_resize = true; 
 	update_policy = SGD;	
 	thresh_hold = 0.5f;
 	mns_thresh_hold = 0.8f;
 	decay = 0.0005f;
-	train_bg = true;
+	neg_mining = true;
 }
 
 AppConfig::~AppConfig() {
-	if (dataset)
-		delete dataset;
+	for (auto it = datasets.begin(); it != datasets.end(); it++) {
+		if (*it)
+			delete (*it);
+	} 
 }
 
-bool AppConfig::Load(const char * filename, int mode) { 
+bool AppConfig::Load(const char * filename, int mode) {
+
 
 	tinyxml2::XMLDocument doc;
 	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
@@ -178,6 +172,17 @@ bool AppConfig::Load(const char * filename, int mode) {
 			fast_resize = ds->BoolAttribute("image-resize-fast", true);
 		ds = ds->FirstChildElement("dataset");
 		if (!ds) return false;
+		if (1 == mode) {
+			while (ds) {
+				Dataset* dataset = New Dataset(ds);
+				dataset->ShuffleFiles();
+				datasets.push_back(dataset);
+				ds = ds->NextSiblingElement();
+			}
+			batch = 1;
+			return true;
+		}
+		
 	}
 
 	const char* dataset_name = nullptr;
@@ -186,7 +191,7 @@ bool AppConfig::Load(const char * filename, int mode) {
 		dataset_name = LoadTrainingSection(root);
 		break;
 	case 1: // testing 
-		dataset_name = LoadTestingSection(root);
+		//dataset_name = LoadTestingSection(root);
 		break;
 	case 2:
 		batch = 1;
@@ -199,14 +204,20 @@ bool AppConfig::Load(const char * filename, int mode) {
 	if (dataset_name) {
 		while (ds) {
 			if (ds->Attribute("name", dataset_name)) {
-				dataset = New Dataset(ds);
+				Dataset* dataset = New Dataset(ds);
 				dataset->ShuffleFiles();
+				datasets.push_back(dataset);
 				break;
 			}
 			ds = ds->NextSiblingElement();
 		}
 	} 
 	return true;
+}
+
+const Dataset * AppConfig::GetDataSet(int i) const {
+	if(i < 0 || i >= datasets.size()) return nullptr;
+	return datasets.at(i);
 }
 
 bool AppConfig::RadmonScale(uint32_t it, int & new_width, int & new_height) const
@@ -251,7 +262,7 @@ float AppConfig::GetCurrentLearningRate(int iteration) const {
 	float rate;
 	if (iteration < sgd_config.burnin) {
 		float temp =  sgd_config.base_rate * pow((float)iteration / sgd_config.burnin, sgd_config.power); 
-		if (temp < 1.0e-6f) temp = 1.0e-6f;
+		//if (temp < 1.0e-6f) temp = 1.0e-6f;
 		return temp;
 	}
 	switch (sgd_config.policy) {
@@ -289,6 +300,9 @@ float AppConfig::GetCurrentLearningRate(int iteration) const {
 
 Dataset::Dataset(const XMLElement * element) {
 	string str;
+	const XMLAttribute* at = element->FindAttribute("name");
+	if (at)
+		name = at->Value();
 	element->QueryText("type", str);
 	if (str == "folder") {
 		if (XML_SUCCESS != element->QueryText("path", str))  return;

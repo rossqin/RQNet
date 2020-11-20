@@ -1,6 +1,5 @@
 #include "stdafx.h"
- 
- 
+#include <direct.h>
 static int gpu_processors = 10;
 static int gpu_kernels_in_mp = 128;
 int gpu_device_cnt = 0;
@@ -308,4 +307,12 @@ float focal_loss_delta(float pred, float alpha, float gamma) {
 	float grad = alpha * (pt - 1.0f) *(gamma * pt * logf(pt) + pt - 1.0f); //
 	//float focal_grad = alpha * (pred - 1.0f) * (gamma * pred * logf(pred) + pred - 1.0f);
 	return grad;
+}
+bool make_sure_dir_exists(const char* path) {
+	struct stat s = { 0 };
+	stat(path, &s);
+	if (0 != (s.st_mode & S_IFDIR)) {
+		return true;
+	}
+	return 0 == mkdir(path);
 }

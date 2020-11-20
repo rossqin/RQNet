@@ -5,12 +5,16 @@
 
 Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*& prev_module) {
 	index = i; 
-	name = element->Attribute("id");
-	if (name.length() == 0) {
+	const char* s = element->Attribute("id");
+	if (!s || !(*s)) {
 		char buf[20];
 		sprintf(buf, "layer%02d", i);
 		name = buf;
 	}
+	else
+		name = s;
+	s = element->Attribute("desc");
+	if (s && *s) desc = s;
 	last_module = nullptr;
 	network = net;
 	const XMLElement* moduleElement = element->FirstChildElement("module");
@@ -21,20 +25,14 @@ Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*&
 		moduleElement = moduleElement->NextSiblingElement();
 	}
 	last_module = prev_module;
-}
-bool dbg_switch = false;
-bool Layer::Forward(ForwardContext & context) {
+} 
+bool Layer::Forward(ForwardContext & context) { 
 	for(size_t i = 0 ; i < modules.size(); i++){
 		InferenceModule* module = modules[i];
 		if (!module->Forward(context)) {
 			cerr << "Forward failed at " << modules[i]->name << endl;
 			return false;
-		}
-		if (dbg_switch) {
-			char filename[MAX_PATH];
-			sprintf(filename, "%s0.2.0\\%s.output.bin", DEBUGGING_DIR, module->name.c_str());
-			module->output.Save(filename, 1);
-		}
+		}		
 	}
 	return true;
 }

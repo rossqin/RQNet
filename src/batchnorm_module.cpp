@@ -72,17 +72,19 @@ bool BatchNormModule::Resize(int w, int h) {
 }
 
 bool BatchNormModule::Forward(ForwardContext & context) {
-	if (fused) {
-		if (prevs.size() != 1) return false;
-		context.input = &(prevs[0]->output);
-		return true;
-	}
+	
 	float one = 1.0f, zero = 0.0f; 
 	if (!InferenceModule::Forward(context)) return false;
 	if (context.input)
 		forward_input = context.input;
 	else
 		forward_input = &input;
+
+	if (fused) {
+		output = *forward_input;
+		return true;
+	}
+
 	void* beta = params.BatchData(0);
 	void* gamma = params.BatchData(1);
 	void* running_mu = params.BatchData(2);
@@ -93,7 +95,10 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 	cudnnStatus_t status;
 	freezed = context.freezeBNParams;
 	cudnnHandle_t handle = GetCUDNNHandle();
-	if (context.training) { 
+	if (context.training) {
+		if (prevs.size() > 0) {
+			prevs[0]->CacheOutput();
+		}
 		status = cudnnBatchNormalizationForwardTraining(handle, CUDNN_BATCHNORM_SPATIAL,
 			&one, &zero, forward_input->Descriptor(), forward_input->Data(), 
 			output.Descriptor(), output, t_desc, gamma, beta,
@@ -133,75 +138,36 @@ bool BatchNormModule::Backward(CudaTensor & delta) {
 	//if(input.Elements() > 0) input.Release();
 	return DistributeDeltas(delta);
 }
-extern bool adam_update(float* theta, float* gt, float* mt, float* vt, int elements, int t, float lr, bool decay);
-extern bool sgd_update(float* weights, float* updates, int elements, float lr, bool decay);
+extern bool adam_update(void* theta, void* gt, void* mt, void* vt, int elements, int t, cudnnDataType_t data_type, float lr, bool decay);
+extern bool sgd_update(void* weights, void* updates, int elements, cudnnDataType_t data_type, float lr, bool decay);
 bool BatchNormModule::UpdateParams(float lr) {
 
 	AppConfig& cfg = GetAppConfig();
 	
 	if (freezed) return true;
-	int size = output_channels << 1;
-	int t = network->cur_iteration;
+
 	switch(cfg.UpdatePolicy()){
 	case SGD : 
-	if(params.DataType() == CUDNN_DATA_FLOAT) {
-		float* weights = reinterpret_cast<float*>(params.Data());
-		float* updates = reinterpret_cast<float*>(training_params.Data());
-		return sgd_update(weights, updates, size, lr / cfg.GetBatch(), false);
-	}
-	else {
-		
-		CudaPtr<float> weights(size);
-		CudaPtr<float> updates(size);
-		__half* f16_w = reinterpret_cast<__half*>(params.Data());
-		__half* f16_u = reinterpret_cast<__half*>(training_params.Data());
-		if (!f16_to_f32(weights.ptr, f16_w, size)) return false;
-		if (!f16_to_f32(updates.ptr, f16_u, size)) return false;
-		if(!sgd_update(weights, updates, size, lr / cfg.GetBatch(), false))
-			return false;
-
-		return f32_to_f16(f16_w, weights.ptr, size);
-	}
+		return sgd_update(params, training_params, output_channels * 2, params.DataType(), lr , false);
+ 
 	case Adam:
+		{
+		void* beta = params.BatchData(0);
+		//void* gamma = params.BatchData(1);
+		void* beta_update = training_params.BatchData(0);
+		//void* gamma_update = training_params.BatchData(1);
+		void* beta_m = adam_params.BatchData(0);
+		//void* gamma_m = adam_params.BatchData(1);
 
-		if (params.DataType() == CUDNN_DATA_FLOAT) {
-			float* beta = reinterpret_cast<float*>(params.BatchData(0));
-			//void* gamma = params.BatchData(1);
-			float* beta_update = reinterpret_cast<float*>(training_params.BatchData(0));
-			//void* gamma_update = training_params.BatchData(1);
-			float* beta_m = reinterpret_cast<float*>(adam_params.BatchData(0));
-			//void* gamma_m = adam_params.BatchData(1);
+		void* beta_v = adam_params.BatchData(2);
+		//void* gamma_v = adam_params.BatchData(3); 
 
-			float* beta_v = reinterpret_cast<float*>(adam_params.BatchData(2));
-			//void* gamma_v = adam_params.BatchData(3); 
-
-			// update beta and gamma at the same time		
-			return adam_update(beta, beta_update, beta_m, beta_v, size, t,  lr, true);
+		// update beta and gamma at the same time
+		int t = network->cur_iteration;
+		return adam_update(beta, beta_update, beta_m, beta_v, 2 * output_channels, t, params.DataType(), lr, false);
 		}
-		else {
-			CudaPtr<float> beta(size);
-			CudaPtr<float> beta_update(size);
-			CudaPtr<float> beta_m(size * 2); 
-			float* beta_v = beta_m.ptr + size;
-
-			__half* h_beta = reinterpret_cast<__half*>(params.BatchData(0));
-			//void* gamma = params.BatchData(1);
-			__half* h_beta_update = reinterpret_cast<__half*>(training_params.BatchData(0));
-			//void* gamma_update = training_params.BatchData(1);
-			__half* h_beta_m = reinterpret_cast<__half*>(adam_params.BatchData(0));
-			//void* gamma_m = adam_params.BatchData(1);
-
-			__half* h_beta_v = reinterpret_cast<__half*>(adam_params.BatchData(2));
-			//void* gamma_v = adam_params.BatchData(3); 
-			if (!f16_to_f32(beta, h_beta, size) || !f16_to_f32(beta_update, h_beta_update, size) ||
-				!f16_to_f32(beta_m, h_beta_m, size * 2)) return false;
-			if (!adam_update(beta, beta_update, beta_m, beta_v, size, t, lr, true)) return false;
-
-			return f32_to_f16(h_beta, beta, size) && f32_to_f16(h_beta_m, beta_m, size * 2);
-		}
-		break;
 	default:
-		return false;
+		return true;
 	}
 	 
 	return true;
@@ -210,7 +176,8 @@ bool BatchNormModule::UpdateParams(float lr) {
 uint32_t BatchNormModule::GetFlops() const {
 	return 0;
 }
-bool fuse_batchnorm(float* filters, float* bias, float* beta, int output_channels, int filter_size);
+bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params, 
+	int output_channels, int filter_size, cudnnDataType_t data_type);
 bool BatchNormModule::Fuse() {
 	if (prevs.size() != 1) return false;
 	if (fused) return true;
@@ -219,29 +186,8 @@ bool BatchNormModule::Fuse() {
 	if (module->bias.Elements() != output_channels) {
 		if (!module->bias.Init(1, output_channels, 1, 1)) return false;
 	}
-	bool r = false;
-	if (network->DataType() == CUDNN_DATA_FLOAT) {
-		float* filters = reinterpret_cast<float*>(module->w.Data());
-		float* bias = reinterpret_cast<float*>(module->bias.Data());
-		float* beta = reinterpret_cast<float*>(params.Data());
-		r = fuse_batchnorm(filters, bias, beta, output_channels, module->w.Elements3D());
-	}
-	else {
-		CudaPtr<float> filters(module->w.Elements());
-		CudaPtr<float> bias(module->bias.Elements());
-		CudaPtr<float> beta(params.Elements());
-		__half* h_filters = reinterpret_cast<__half*>(module->w.Data());
-		__half* h_bias = reinterpret_cast<__half*>(module->bias.Data());
-		__half* h_beta = reinterpret_cast<__half*>(params.Data());
-
-		if (!f16_to_f32(filters, h_filters, module->w.Elements()) ||
-			!f16_to_f32(bias, h_bias, module->bias.Elements()) ||
-			!f16_to_f32(beta, h_beta, params.Elements())) return false;
-
-		if (!fuse_batchnorm(filters, bias, beta, output_channels, module->w.Elements3D())) return false;
-		r = f32_to_f16(h_filters, filters, module->w.Elements()) &&
-			f32_to_f16(h_bias, bias, module->bias.Elements());
-	}
+	bool r = fuse_batchnorm(module->w, module->bias,params,output_channels,
+		module->w.Elements3D(), module->w.DataType());
 	if (r) fused = true; 
 	return r;
 }

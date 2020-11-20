@@ -55,6 +55,18 @@ float BoxIoU(const Box& A, const Box& B) {
 	}
 	return i / u;
 }
+float BoxIoUEx(const Box& A, const Box& B ) { 
+	float i = BoxIntersection(A, B);	
+	if (0.0 == i) return 0.0;
+	float size_b = B.Area();
+	bool a_in_b = (size_b == i);
+	float u = A.Area() + size_b - i;
+	if (0.0 == u) {
+		cerr << "Error: zero divisor in BoxIoU!\n";
+		return 1.0;
+	}
+	return a_in_b ? (i / u) + 1.0f : (i / u);
+}
 float BoxRMSE(const Box& A, const Box& B) {
 	float dx = A.x - B.x;
 	float dy = A.y - B.y;

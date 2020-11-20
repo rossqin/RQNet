@@ -6,15 +6,17 @@
 		<channels>3</channels>
 		<height>416</height>
 		<width>416</width>
-		<classes>1</classes>
-	</input>
-	<anchors>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
 		<anchor width="10" height="14" />
-		<anchor width="23" height="27" />
+		<anchor width="27" height="23" />
 		<anchor width="37" height="58" />
-		<anchor width="81" height="82" />
-		<anchor width="135" height="169" />
-		<anchor width="344" height="319" />
+		<anchor width="75" height="67" />
+		<anchor width="93" height="104" />
+		<anchor width="187" height="163" />
 	</anchors>
 	<layers>
 		<layer id="layer01">
@@ -81,10 +83,10 @@
 			<module id="activation" type="activation" method="leaky" before="normalization" />
 		</layer>
 		<layer id="layer16">
-			<module  type="conv"  id="convolution" filters="18" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer15.activation"/> 
+			<module  type="conv"  id="convolution" filters="15" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer15.activation"/> 
 		</layer>
 		<layer id="layer17">
-			<module id="yolo" type="yolo-detection" before="layer16.convolution" ignore-thresh="0.7" truth-thresh="1.0" anchor-masks="3,4,5" />
+			<module id="yolo" type="yolo-detection" before="layer16.convolution" anchor-masks="3,4,5" />
 		</layer>
 		<layer id="layer18">
 			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer14.activation"/>
@@ -100,10 +102,10 @@
 			<module id="activation" type="activation" method="leaky" before="normalization" />
 		</layer>
 		<layer id="layer21">
-			<module  type="conv"  id="convolution" filters="18" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer20.activation"/> 
+			<module  type="conv"  id="convolution" filters="15" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer20.activation"/> 
 		</layer>
 		<layer id="layer22">
-			<module id="yolo" type="yolo-detection" before="layer21.convolution" ignore-thresh="0.7" truth-thresh="1.0" anchor-masks="0,1,2" />
+			<module id="yolo" type="yolo-detection" before="layer21.convolution" anchor-masks="0,1,2"  />
 		</layer>
 	</layers>
 </net>

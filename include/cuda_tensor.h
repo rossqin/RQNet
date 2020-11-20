@@ -37,7 +37,10 @@ public:
 		ptr = New T[length];
 		err = cudaSuccess;
 		bytes = length * sizeof(T); 
-		if (src) err = cudaMemcpy(ptr, src, bytes, cudaMemcpyDeviceToHost);
+		if (src)
+			err = cudaMemcpy(ptr, src, bytes, cudaMemcpyDeviceToHost);
+		else
+			memset(ptr, 0, bytes);
 		 
 	}
 	~CpuPtr() { if (ptr) delete []ptr; }
@@ -65,8 +68,6 @@ public:
 		if (ptr && src) {
 			err = cudaMemcpy(ptr, src, bytes, cudaMemcpyHostToDevice);
 		}
-		else
-			cudaMemset(ptr, 0, bytes);
 	}
 	~CudaPtr() { if (ptr) cudaFree(ptr); }
 };
