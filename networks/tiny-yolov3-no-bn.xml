@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0">
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
+		<anchor width="0.05650275" height="0.05749017" />
+		<anchor width="0.08614462" height="0.09038623" />
+		<anchor width="0.11914880" height="0.12345063" />
+		<anchor width="0.16035155" height="0.16402102" />
+		<anchor width="0.22356461" height="0.22904992" />
+		<anchor width="0.36664462" height="0.39088952" />
+	</anchors>
+	<layers>
+		<layer id="layer01">
+			<module  type="conv"  id="convolution" filters="16" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="none"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer02">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="2" stride-h="2"  before="layer01.activation" />
+		</layer>
+		<layer id="layer03">
+			<module  type="conv"  id="convolution" filters="32" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer02.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer04">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="2" stride-h="2"  before="layer03.activation" />
+		</layer>
+		<layer id="layer05">
+			<module  type="conv"  id="convolution" filters="64" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer04.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer06">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="2" stride-h="2"  before="layer05.activation" />
+		</layer>
+		<layer id="layer07">
+			<module  type="conv"  id="convolution" filters="128" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer06.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer08">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="2" stride-h="2"  before="layer07.activation" />
+		</layer>
+		<layer id="layer09">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer08.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer10">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="2" stride-h="2"  before="layer09.activation" />
+		</layer>
+		<layer id="layer11">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer10.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer12">
+			<module id="pool" type="max-pool" window-w="2" window-h="2" stride-w="1" stride-h="1" pads_begin="0,0" pads_end="1,1" before="layer11.activation" />
+		</layer>
+		<layer id="layer13">
+			<module  type="conv"  id="convolution" filters="1024" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer12.pool"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer14">
+			<module  type="conv"  id="convolution" filters="256" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer13.activation"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer15">
+			<module  type="conv"  id="convolution" filters="512" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer14.activation"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer16">
+			<module  type="conv"  id="convolution" filters="35" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer15.activation"/> 
+		</layer>
+		<layer id="layer17">
+			<module id="yolo" type="yolo" before="layer16.convolution" anchor-masks="0,1,2" />
+		</layer>
+		<layer id="layer18">
+			<module  type="conv"  id="convolution" filters="128" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="false" before="layer14.activation"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer19">
+			<module id="upsample" type="upsample"  stride-w="2" stride-h="2"  before="layer18.activation" />
+		</layer>
+		<layer id="layer20">
+			<module  type="conv"  id="convolution" filters="256" filter-w="3" filter-h="3" stride-w="1"  stride-h="1" bias="false" before="layer19.upsample,layer09.activation"/>
+			<module id="activation" type="activation" method="leaky" before="convolution" />
+		</layer>
+		<layer id="layer21">
+			<module  type="conv"  id="convolution" filters="35" filter-w="1" filter-h="1" stride-w="1"  stride-h="1" bias="true" before="layer20.activation"/> 
+		</layer>
+		<layer id="layer22">
+			<module id="yolo" type="yolo" before="layer21.convolution" anchor-masks="3,4,5"  />
+		</layer>
+	</layers>
+</net>

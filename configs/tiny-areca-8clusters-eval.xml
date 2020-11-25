@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RQNet-Config small-object="true"> 
+	<!--by default all *.jpg files under this folder are loaded as -->
+	<datasets image-resize-fast="true" >
+		<dataset name="my-dataset-for-testing">
+			<type>folder</type>
+			<path>E:\AI\Data\areca-train\test</path>
+		</dataset>
+	</datasets>
+	<thresh-hold>0.5</thresh-hold>
+	<nms-thresh-hold>0.7</nms-thresh-hold>
+	<train-settings freeze-conv="false" freeze-activation="false" freeze-batchnorm="false" hard-negative-mining="true">
+		<dataset>my-dataset-for-training</dataset>
+		<save-input>false</save-input>
+		<focal-loss>true</focal-loss>
+		<params-update-policy>Adam</params-update-policy>
+		<input-files-dir>network-input</input-files-dir>
+		<termination>500000</termination>
+		<weights>
+			<save>1000</save>
+			<output-dir>tiny-yolov3-8clusters</output-dir>
+			<prefix>8-cluster-bgm-</prefix>
+			<momentum>0.9</momentum> 
+			<decay>0.0005</decay>
+		</weights> 
+		<data-augment>
+			<jitter>0.05</jitter>
+			<saturation>1.2</saturation>
+			<exposure>1.2</exposure>
+			<hue>0.1</hue>
+		</data-augment>
+		<multi-scale enable="false" interval="10">
+			<!-- w, h -->
+			<scale width="352" height="352" />
+			<scale width="384" height="384" />
+			<scale width="416" height="416" />
+			<scale width="448" height="448" />
+			<scale width="480" height="480" />
+		</multi-scale>
+		<batch>10</batch>
+		<subdivision>1</subdivision>
+		<learning-rate>
+			<base>0.0001</base>
+			<burn-in>1000</burn-in>
+			<policy>steps</policy>
+			<steps> 
+				<step iteration="80000" rate="0.000001" />
+				<step iteration="100000" rate="0.0000001" />
+			</steps>
+		</learning-rate>
+	</train-settings>
+	<test-settings>
+		<dataset>my-dataset-for-testing</dataset>
+	</test-settings>
+	
+</RQNet-Config>
