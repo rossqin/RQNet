@@ -60,6 +60,27 @@
     <ClCompile Include="src\ssd.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\OpenVINO.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\shuffle_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\split_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\resample_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\concat_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\activation_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\eltwise_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\stdafx.h">
@@ -96,6 +117,9 @@
       <Filter>include</Filter>
     </ClInclude>
     <ClInclude Include="include\cuda_tensor.h">
+      <Filter>include</Filter>
+    </ClInclude>
+    <ClInclude Include="include\OpenVINO.h">
       <Filter>include</Filter>
     </ClInclude>
   </ItemGroup>
