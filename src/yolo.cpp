@@ -8,7 +8,7 @@
 YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev): 
 	InferenceModule(element, l,net, prev) {
 	train_bg = true;
-	GetPrevModules(element);
+	ParsePrevModules(element);
 	const char* s = element->Attribute("anchor-masks");
 	if (s)
 		mask_anchor_str = s;
@@ -24,14 +24,20 @@ YoloModule::YoloModule(const XMLElement* element, Layer* l, CNNNetwork* net, Inf
 		}
 		
 	}
-	
+	bg_normalizer = element->FloatAttribute("bg-normalizer", 0.05f);
+	cls_normalizer = element->FloatAttribute("class-normalizer", 1.0f);
+	iou_normalizer = element->FloatAttribute("iou-normalizer", 0.25f);
+	obj_normalizer = element->FloatAttribute("object-normalizer", 1.0f);
+	ignore_thresh = element->FloatAttribute("ignore-thresh", 0.5f);
+	truth_thresh = element->FloatAttribute("truth-thresh", 1.0f);
+	objectness_smooth = element->BoolAttribute("objectness-smooth", false);
+	nms_beta = element->FloatAttribute("nms-beta", 0.6f);
+	max_delta =  element->FloatAttribute("max-delta", FLT_MAX); 
 	output.DataType(CUDNN_DATA_FLOAT);
-	Resize(input_width, input_width);
-	output_channels = input_channels; 
+	Resize(input_width, input_height);
+	output_channels = input_channels;  
 
-}
-YoloModule::~YoloModule() { 
-}
+} 
 enum {
 	INDEX_PROBILITY_X = 0,
 	INDEX_PROBILITY_Y,  // 1
@@ -126,11 +132,13 @@ bool YoloModule::Detect() {
 		cerr << " Error: Copy memory failed in " << name << "!\n";
 		return false;
 	}
+	int classes = network->GetClassCount(); 
+
 	DetectionResult dr ;
 	dr.layer_index = this->layer->GetIndex();
 	dr.class_id = 0;
 	dr.class_confidence = 1.0f; 
-	int classes = network->GetClassCount();
+	
  
 	float threshold = GetAppConfig().ThreshHold();
 	for (int y = 0,i = 0; y < output.Height(); y++) {
@@ -179,7 +187,7 @@ bool YoloModule::Detect() {
 	return true;
 }
 //计算class的delta
-void YoloModule::DeltaClass(float* output, float* delta, int cls_index, int class_id) {
+void YoloModule::DeltaClass(float* o, float* d, int cls_index, int class_id) {
 
 	bool focal_loss = GetAppConfig().FocalLoss();
 	int classes = network->GetClassCount();
@@ -187,24 +195,24 @@ void YoloModule::DeltaClass(float* output, float* delta, int cls_index, int clas
 	float focal_alpha = 0.5f, focal_grad = 1.0f;    // 0.25 or 0.5
 	for (int c = 0; c < classes; c++, cls_index += cells_count) {
  
-		float pred = output[cls_index];
+		float pred = o[cls_index];
 		if (focal_loss) {
 			if (pred > 0.0f) focal_grad = (pred - 1.0f) * (2.0f * pred * logf(pred) + pred - 1.0f);
 			focal_grad *= focal_alpha;
 			if (c != class_id) {
-				delta[cls_index] = focal_grad * (0.0f - pred); 
+				d[cls_index] = focal_grad * (0.0f - pred); 
 			}
 			else { //这是匹配的class_id
-				delta[cls_index] = focal_grad * (1.0f - pred); 
+				d[cls_index] = focal_grad * (1.0f - pred); 
 			}
 		}
 		else {
 
 			if (c != class_id) {
-				delta[cls_index] = -pred; 
+				d[cls_index] = -pred; 
 			}
 			else { //这是匹配的class_id 
-				delta[cls_index] = 1.0f - pred; 
+				d[cls_index] = 1.0f - pred; 
 			}
 
 		} 
@@ -262,14 +270,79 @@ bool YoloModule::Forward(ForwardContext& context) {
   	if (!context.training) {   
   		return Detect();
   	}
-	if (forward_input->SameShape(shortcut_delta))
+	if (forward_input->Like(shortcut_delta))
 		shortcut_delta = 0.0f;
-	else if (!shortcut_delta.Init(network->MiniBatch(), output_channels,output_height, output_width))
+	else if (!shortcut_delta.Init({ network->MiniBatch(), output_channels,output_height, output_width }))
 		return false;
 
 	return CalcDelta();
 } 
-static bool fix_precision = false;
+static inline void fix_nan_inf(float& val) {
+	if (isnan(val) || isinf(val)) {
+		val = 0.0f;
+	}
+}
+
+static inline void clip_value(float& val, const float max_val) {
+	if (val > max_val) { 
+		val = max_val;
+	}
+	else if (val < -max_val) { 
+		val = -max_val;
+	} 
+}
+
+float YoloModule::DeltaBox(float* o, float* d, const TruthInLayer& gt, Box pred, float anchor_w, float anchor_h) {
+	 
+	if (pred.w == 0) { pred.w = 1.0f; }
+	if (pred.h == 0) { pred.h = 1.0f; }
+
+	float loss = 0.0f;
+
+	int total_cells = output_width * output_height;
+	if (GetAppConfig().UseCIoULoss())    {  // use ciou
+		
+		float delta_x = 0.0f, delta_y = 0.0f, delta_w = 0.0f, delta_h = 0.0f;
+
+		loss = DeltaCIoU(pred, gt.box, delta_x, delta_y, delta_w, delta_h);
+		fix_nan_inf(delta_x);
+		fix_nan_inf(delta_y);
+		fix_nan_inf(delta_w);
+		fix_nan_inf(delta_h);
+
+		if (max_delta != FLT_MAX) {
+			clip_value(delta_x, max_delta);
+			clip_value(delta_y, max_delta);
+			clip_value(delta_w, max_delta);
+			clip_value(delta_h, max_delta);
+		}
+		d[0] += delta_x * iou_normalizer;
+		d[total_cells] += delta_y * iou_normalizer;
+		d[total_cells * 2] += delta_w * iou_normalizer;
+		d[total_cells * 3] += delta_h * iou_normalizer;
+	}
+	else {
+		float scale = (2.0f - (gt.box.w * gt.box.h) / total_cells) * iou_normalizer;
+
+		float delta_x = (gt.x_offset - o[0]);
+		float delta_y = (gt.y_offset - o[total_cells]);
+		float delta_w = (log(gt.box.w / anchor_w) - o[total_cells * 2]);
+		float delta_h = (log(gt.box.h / anchor_h) - o[total_cells * 3]);
+
+		d[0] = scale * delta_x;
+		d[total_cells] = scale * delta_y;
+		d[total_cells * 2] = scale * delta_w;
+		d[total_cells * 3] = scale * delta_h;
+
+		loss = 0.5f * (delta_x * delta_x + delta_y * delta_y + delta_w * delta_w + delta_h * delta_h);
+
+
+	}
+	return loss;
+	 
+}
+const float OBJECTNESS_TARGET = 0.7f;
+
 bool YoloModule::CalcDelta(){
 	int total_cells = output_height * output_width; // 目前layer总共有多少个格子
 	CpuPtr<float> delta_cpu(output.Elements3D()); // delta_cpu就是在每次计算一个文件的delta时的delta值
@@ -279,28 +352,25 @@ bool YoloModule::CalcDelta(){
 	int classes = network->GetClassCount(); 
 	int processed_gt_count = 0;
 	float d;
-	perf_data = { 0 };
-// 	float bg_loss = 0.0f;
-// 	float obj_loss = 0.0f;
-// 	float box_loss = 0.0f;
-	int cfl_t_count = 0;
-	float loss = 0.0f;
+	TrainingResult result = {  0 }; 
+
+	int cfl_t_count = 0; 
 	for (int b = 0; b < output.Batch(); b++) { // 每次计算一个文件的数据
 		
 		// 把GPU里面的数据复制到CPU
 		if (!output_cpu.Pull(output.BatchData(b))) return false; 
 
 		// 第一步：先确定哪些Gt是应该在这层预测的
-		if(!ResolveGTs(b, cfl_t_count)) return false;
+		if(!ResolveGTs(b, cfl_t_count,result.gt_count)) return false;
 		delta_cpu.Reset();
 		
 		//现在我们有一个没有冲突的GroundTruth列表，每个GT都有唯一的先验框负责
 
 		//接下来计算背景的先验框
 		if (GetAppConfig().NeedNegMining()) {
-			CalcBgAnchors();
+			CalcBgAnchors(result.bg_count);
 			// 现在，所有的背景预测框在bg_anchors列表里面，用一个平衡因子来
-			float balance_factor = 0.05f;//1.0f / total_cells;
+			 
 			processed_gt_count += gts.size();
 			float conf;
 			// 计算背景的delta
@@ -308,11 +378,10 @@ bool YoloModule::CalcDelta(){
 			for (auto it = bg_anchors.begin(); it != bg_anchors.end(); it++) {
 				int data_offset = EntryIndex(it->x, it->y, it->a, INDEX_CONFIDENCE);
 				conf = output_cpu[data_offset];
-				perf_data.bg_conf += conf;
+				result.bg_conf += conf;
 				d = (0.3f - conf);
 				if (d < 0.0f) {
-					delta_cpu[data_offset] = balance_factor * d;
-					//	bg_loss += balance_factor * d * d; 
+					delta_cpu[data_offset] = bg_normalizer * d; 
 				}
 
 			}
@@ -359,73 +428,79 @@ bool YoloModule::CalcDelta(){
 				exp(output_cpu[w_offset]) * anchor_w,
 				exp(output_cpu[h_offset]) * anchor_h);
 
-			float iou = BoxIoU(it->box, pred_box);
-			perf_data.iou += iou;
 			float conf = output_cpu[o_offset];
-			if (conf > 0.5f)
-				perf_data.gt_recall++;
-			perf_data.object_conf += conf; 
-			delta_cpu[o_offset] = 1.0f - conf;;
-			//obj_loss += d * d;
+			if (conf > GetAppConfig().ThreshHold())
+				result.gt_recall++;
+			result.object_conf += conf; 
+			if (GetAppConfig().FocalLoss()) {
+				delta_cpu[o_offset] = focal_loss_delta(conf,0.5f,2.0f) * obj_normalizer;
+			}
+			else{
+				if (conf < OBJECTNESS_TARGET)
+					delta_cpu[o_offset] = (OBJECTNESS_TARGET - conf) * obj_normalizer;
+				else
+					delta_cpu[o_offset] = 0.0f;
+			}
 			 
 			if (classes == 1) {
-				perf_data.cls_conf += 1.0f;
+				result.cls_conf += 1.0f;
 			}
 			else {
-				perf_data.cls_conf += output_cpu[o_offset + total_cells * (1 + it->class_id)];
+				result.cls_conf += output_cpu[o_offset + total_cells * (1 + it->class_id)];
 				DeltaClass(output_cpu.ptr, delta_cpu.ptr, o_offset + total_cells, it->class_id);
 			}
-			float scale = (2.0f - (it->box.w * it->box.h) / total_cells);
+			float iou = BoxIoU(it->box, pred_box);
+			result.iou += iou;
+			if (iou > 0.5f) {
+				result.recalls++;
+				if(iou > 0.75f)
+					result.recalls_75++;
+			}  
+			result.ciou += BoxCIoU(it->box, pred_box); 
 
-			d = scale * (it->x_offset - output_cpu[x_offset]);
-			delta_cpu[x_offset] = d;
-			//box_loss += d * d; 
+			result.box_loss += DeltaBox(output_cpu.ptr + x_offset, delta_cpu.ptr + x_offset, *it, pred_box, anchor_w, anchor_h);
 
-			d = scale * (it->y_offset - output_cpu[y_offset]);
-			delta_cpu[y_offset] = d;
-			//box_loss += d * d; 
-			
-			d = scale * (log(it->box.w / anchor_w) - output_cpu[w_offset]);
-			delta_cpu[w_offset] = d;
-			//box_loss += d * d; 
-			
-			d = scale * (log(it->box.h / anchor_h) - output_cpu[h_offset]);
-			delta_cpu[h_offset] = d;
-			//box_loss += d * d;
 		}
 		shortcut_delta.Push(delta_cpu, offset, delta_cpu.Length());
-		offset += delta_cpu.Length();
-		loss += square_sum_array(delta_cpu.ptr, delta_cpu.Length());
+		offset += delta_cpu.Length(); 
+		for (int a = 0; a < masked_anchors.size(); a++) {
+			float* p = delta_cpu.ptr;
+			if (classes == 1)
+				p += a * 5 * total_cells;
+			else
+				p += a * (5 + classes) * total_cells;
+			float obj_loss = square_sum_array(p + 4 * total_cells, total_cells) / (obj_normalizer * obj_normalizer);
+			result.obj_loss += obj_loss; 
+			if (classes > 1) {
+				result.cls_loss += square_sum_array(p + 5 * total_cells, total_cells * classes);
+			}
+		}
+		result.old_loss += square_sum_array(delta_cpu.ptr, delta_cpu.Length());
+		
 	} 
-	char line[300];
-	loss /= output.Batch();
-// 	bg_loss /= output.Batch();
-// 	obj_loss /= output.Batch();
-// 	box_loss /= output.Batch();
+	result.old_loss /= output.Batch();
+	result.obj_loss /= output.Batch();
+	result.cls_loss /= output.Batch();
+	result.box_loss /= output.Batch();
+	
+	stringstream ss;
+	ss << "    " << setw(20) << right << name << ":" << setw(4) << result.gt_recall << "/" << setw(4) << left << result.gt_count << " recalled. ";
 
-	//float loss = bg_loss + obj_loss + box_loss;
-	if (perf_data.gt_count > 0) {
-		if(classes > 1)
-		sprintf_s(line, 300, "  %15s: %4d/%4d recalled. conflict:%d, iou: %.6f, obj: %.4f, bg: %.4f, cls: %.4f.\n",
-			name.c_str(), perf_data.gt_recall, perf_data.gt_count, cfl_t_count, perf_data.iou / perf_data.gt_count,
-			perf_data.object_conf / perf_data.gt_count, perf_data.bg_conf / perf_data.bg_count,
-			perf_data.cls_conf / perf_data.gt_count /*, box_loss, bg_loss, obj_loss */);
-		else
-			sprintf_s(line, 300, "  %15s: %4d/%4d recalled. conflict:%d, iou: %.6f, obj: %.4f.\n",
-				name.c_str(), perf_data.gt_recall, perf_data.gt_count, cfl_t_count, perf_data.iou / perf_data.gt_count,
-				perf_data.object_conf / perf_data.gt_count, perf_data.bg_conf / perf_data.bg_count
-				/*,box_loss, bg_loss, obj_loss*/);
-		std::cout << line;
+	if (result.gt_count > 0) {
+		ss << fixed << setprecision(4) << " obj: " << result.object_conf / result.gt_count;
+		if (result.bg_count > 0) {
+			ss << ", bg: " << result.bg_conf / result.bg_count;
+		}
+		if (classes > 1)
+			ss << ", class conf: " << result.cls_conf / result.gt_count ;
+		ss << ", iou: " <<  result.iou / result.gt_count ; 
 	}
-	/*sprintf(line, "          .5R: %.2f%%, .75R: %.2f%%,  .5P: %.2f%%, .75P: %.2f%%,.\n", 
-		100.0f * perf_data.tp_50 / perf_data.gt_count, 100.0f * perf_data.tp_50 / (perf_data.tp_50 + perf_data.fp_50), 
-		100.0f * perf_data.tp_75 / perf_data.gt_count,
-		100.0f * perf_data.tp_75 / (perf_data.tp_75 + perf_data.fp_75));
-	cout << line;*/
-	network->RegisterTrainingResults(loss,perf_data.tp_50,perf_data.fp_50,perf_data.tp_75,perf_data.fp_75);
+
+	cout << ss.str() << endl;
+	network->AddTrainingResult(result);
 	return true;
 } 
-bool YoloModule::ResolveGTs(int batch,int& cfl_t_count) {
+bool YoloModule::ResolveGTs(int batch,int& cfl_t_count,int& gt_count) {
 	// 第一步：先确定哪些Gt是应该在这层预测的
 	const LPObjectInfos all_truths = network->GetBatchTruths(batch);
 	if (!all_truths) return false;
@@ -455,7 +530,7 @@ bool YoloModule::ResolveGTs(int batch,int& cfl_t_count) {
 		//看看这个GT是不是应该由本layer来负责预测
 		for (int a = (int)masked_anchors.size() - 1; a >= 0; a--) {
 			if (masked_anchors[a].masked_index == best_anchor_index) {
-				TruthInLayer* truth = new TruthInLayer;
+				TruthInLayer* truth = New TruthInLayer;
 				memset(truth, 0, sizeof(TruthInLayer));
 				truth->box = { object.x * output_width, object.y * output_height,
 						object.w * output_width, object.h * output_height };
@@ -473,7 +548,7 @@ bool YoloModule::ResolveGTs(int batch,int& cfl_t_count) {
 					<< ") matched to " << name.c_str() << "( " << truth->cell_x << ", " <<
 					truth->cell_y << ", " << a << " ) with max_iou " << best_iou << endl;
 				//*/
-				perf_data.gt_count ++;
+				gt_count ++;
 				int c_index = (truth->cell_y * output_width  + truth->cell_x )
 					* masked_anchors.size() + a;
 				truths_in_layer++; 
@@ -579,7 +654,7 @@ bool YoloModule::ResolveGTs(int batch,int& cfl_t_count) {
 #endif
 	return true;
 }
-void YoloModule::CalcBgAnchors() {
+void YoloModule::CalcBgAnchors(int& bg_count) {
 	// 看看哪些预测框是背景框
 	bg_anchors.clear();
 	for (int y = 0; y < output_height; y++) {
@@ -618,26 +693,14 @@ void YoloModule::CalcBgAnchors() {
 			}
 		}
 	}
-	perf_data.bg_count += bg_anchors.size();
+	bg_count += bg_anchors.size();
 }
 bool YoloModule::Backward(CudaTensor& delta) {
 	delta = shortcut_delta; 
 	return shortcut_delta.Release();
-}
-
-bool YoloModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset, l_index)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"RegionYolo\">" << endl;
-	//<data />
-	//<data axis="1" classes="1" coords="4" do_softmax="0" end_axis="3" mask="0,1,2" num="9"/>
-	string str;
-	network->GetAnchorsStr(str);
-	int classes = network->GetClassCount();
-	xml << "      <data anchors=\""<< str<< "\" axis=\"1\" classes=\"" << classes << "\" coords=\"4\"  do_softmax=\"0\" end_axis=\"3\" mask=\"" <<  
-		mask_anchor_str <<"\" num=\""<< network->GetAnchorCount() <<"\" />" << endl;
-	WritePorts(xml);
-	xml << "    </layer>" << endl;
-	return true;
+} 
+void YoloModule::WriteOpenVINOOutput(ofstream& xml) const {
+	xml << "\t\t<output id=\"" << name << "\" base=\"" << prevs[0].module->Name() << "\" anchor-masks=\"" << mask_anchor_str << "\" />\n";
 }
 uint32_t YoloModule::GetFlops() const {
 	return 0;

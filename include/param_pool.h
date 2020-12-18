@@ -33,6 +33,6 @@ public:
 	bool Save(const char* filename,int i = -1);
 	bool TransformDarknetWeights(const char* cfg, const char* filename,const char* out_dir);
 	bool DumpAsExcels(const char* output_dir) const;
-	 
+	void Reset();
 
 };

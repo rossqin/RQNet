@@ -2,75 +2,81 @@
 #include "tinyxml2.h"
 #include "cuda_tensor.h"
 #include "activation.h"
+#include "OpenVINO.h"
 using namespace tinyxml2;
 class ParamPool;
 class InferenceModule;
 struct ForwardContext;
 class Layer;
 class CNNNetwork;
-typedef map<string, InferenceModule*> ModulePool;
-class ShortcutModule;
-struct PerfData {
-	int gt_count;		// 总共处理了多少个ground truths
-	int bg_count;
-	int gt_recall;		// 训练过程中对应的anchor的objectness > 0.5
-	float iou;			// 对于ground_truths, 全部的iou是多少
-	float object_conf;	// 和ground_truth 相关的总confidence
-	float bg_conf;		// backgound confidence 
-	float cls_conf;		// class confidence
-	float loss;
-
-	int tp_50;			// iou的标准为50%的情况下的ture positive数量
-	int fp_50;			// iou的标准为50%的情况下的false positive数量
-	int tp_75;			// iou的标准为75%的情况下的ture positive数量
-	int fp_75;			// iou的标准为50%的情况下的false positive数量
+typedef map<string, InferenceModule*> ModulePool; 
+struct PrevModuleOuput {
+	InferenceModule* module;
+	int group_id;
 };
+class EltwiseModule;
+class ConcatModule;
+class SplitModule;
 class InferenceModule {
 protected:
-	mutable int index;
-	int output_port;
 	int input_height;
 	int input_width;
 	int output_height;
 	int output_width;
 	int input_channels;
-	int output_channels; 
-	PerfData perf_data;
-	 
-	InferenceModule* logical_prev; 
+	int output_channels;
+	bool concat_prevs;
+	string name;
+	CudaTensor input, output, shortcut_delta;
+	InferenceModule* logical_prev;
 	Layer* layer;
 	CNNNetwork* network;
-	
-	vector<InferenceModule*> prevs;
-	virtual void GetPrevModules(const XMLElement* element, bool add_channels = true);	 
-	virtual bool Resize(int w, int h) = 0;
-	bool PrepareShortcutDelta();
-	void WritePorts(ofstream& xml) const;
-	char* cached_input ;
-	char* cached_output;
+	vector<PrevModuleOuput> prevs; 
+
+	// for OpenVINO IR
+	const char* ir_type;
+	int ir_output_port; 
+	map<string, string> ir_params;
+
+
+	friend class EltwiseModule;
+	friend class ConcatModule;
+	friend class SplitModule;
+
 	static InferenceModule* last_parsing;
-	friend class ShortcutModule;
-public:
-	string name;
-	CudaTensor input, output;
-	CudaTensor shortcut_delta;
-	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
-	virtual ~InferenceModule();
-	static InferenceModule* FromXmlElement(const XMLElement* element,  Layer* layer, CNNNetwork* network, InferenceModule* prev);
-	inline const char* Precision() const { return (output.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
-	inline int GetOutputChannels() const { return output_channels; }
-	bool UpdateShortcutDelta(const CudaTensor& delta);
+public: 
+	
+	virtual ~InferenceModule() {}
 	virtual bool Forward(ForwardContext& context) ;
 	virtual bool Backward(CudaTensor& delta) ;
 	virtual bool UpdateParams(float lr) { return true; }
 	virtual bool DistributeDeltas(CudaTensor& delta);
-	virtual bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
+	virtual bool RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector<OpenVINOIRv7Edge>& edges,
+		ofstream& bin, size_t& bin_offset, bool fp16);
+	virtual void WriteOpenVINOOutput(ofstream& xml) const {} 
 	virtual uint32_t GetFlops() const = 0;
-	bool CacheOutput();
+	virtual void ParsePrevModules(const XMLElement* element);
+	virtual bool Resize(int w, int h) = 0; 
+	virtual CudaTensor& GetOutput(int gid) { return output; }
+	virtual CudaTensor& GetShortcutDelta(int gid) { return shortcut_delta; }
+	virtual bool ShortcutDelta(const CudaTensor& d, int group_id = -1);
+	virtual int OutputCount() const { return 1; }
+
+	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	inline const char* Precision() const { return (output.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
+	inline int GetOutputChannels() const { return output_channels; } 
+	inline const string& Name() const { return name; }
+
+	static InferenceModule* FromXmlElement(const XMLElement* element, Layer* layer, CNNNetwork* network, InferenceModule* prev);
+
+	//bool PrepareShortcutDelta();
+	InferenceModule* GetPrev(int n, int& group_id, bool ignore_bn = true) const;
+
 };
 class BatchNormModule;
 class ConvolutionalModule : public InferenceModule {
 protected:
+	int groups;
 	CudaTensor* forward_input;
 	CudaTensor w;
 	CudaTensor dw;
@@ -91,8 +97,7 @@ protected:
 	int stride_w;
 	int stride_h;
 	int dilation_w;
-	int dilation_h;
-	int groups;
+	int dilation_h; 
 
 	size_t workspace_size;
 	
@@ -104,13 +109,15 @@ protected:
 	cudnnConvolutionBwdFilterAlgo_t bwdf_algo; 
 	bool Resize(int w, int h);
 	friend class BatchNormModule;
+	friend class CNNNetwork;
 public :
 	~ConvolutionalModule();
 	ConvolutionalModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool UpdateParams(float lr);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
+	bool RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector<OpenVINOIRv7Edge>& edges, 
+		ofstream& bin, size_t& bin_offset, bool fp16) ;
 	uint32_t GetFlops() const;
 };
  
@@ -125,14 +132,13 @@ protected:
 	int pad_ht;
 	int pad_hb;
 	int* indexes;
-	cudnnPoolingMode_t mode;
+	cudnnPoolingMode_t mode; 
 	bool Resize(int w, int h);
 public :
 	PoolingModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	~PoolingModule();
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
 class BatchNormModule : public InferenceModule {
@@ -142,10 +148,6 @@ protected:
 	CudaTensor training_params;
 
 	CudaTensor adam_params; 
-	//CudaTensor adam_gamma_m;
-	//CudaTensor adam_gamma_v;
-	//CudaTensor adam_beta_m;
-	//CudaTensor adam_beta_v;
 
 	bool freezed;
 	cudnnTensorDescriptor_t t_desc; 
@@ -158,9 +160,7 @@ public:
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 	bool UpdateParams(float lr);
-	inline bool IsFused() const { return fused; }
-	//Do nothing.
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const { return true; }
+	inline bool IsFused() const { return fused; } 
 	uint32_t GetFlops() const;
 	bool Fuse();
 };
@@ -170,11 +170,9 @@ protected:
 	float factor; 
 	bool Resize(int w, int h);
 public:
-	ActivationModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
-	~ActivationModule();
+	ActivationModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev); 
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const;
 };
 class UpSampleModule : public InferenceModule {
@@ -186,33 +184,21 @@ public:
 	UpSampleModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	~UpSampleModule();
 	bool Forward(ForwardContext& context);
-	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
+	bool Backward(CudaTensor& delta);  
 	uint32_t GetFlops() const;
 };
-
-
-class DeconvModule : public InferenceModule {
-protected:
  
+class EltwiseModule : public InferenceModule {
 public:
-	DeconvModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
-	~DeconvModule();
-	bool Forward(ForwardContext& context);
-	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const { return false; }
-	uint32_t GetFlops() const { return 0; }
-};
-class ShortcutModule : public InferenceModule {
+	enum { SUM = 0, SUB, MUL, DIV, MAX, MIN, SQUARED_DIFF, FLOOR_MOD, POW, LOGICAL_AND, LOGICAL_OR, LOGICAL_XOR, LESS, LESS_EQUAL, GREATER, GREATER_EQUAL, EQUAL, NOT_EQUAL };
 protected:
+	int operation;
 	bool Resize(int w, int h);
 public:
-	ShortcutModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
-	~ShortcutModule();
-	bool Forward(ForwardContext& context);
+	
+	EltwiseModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev); 
+	bool Forward(ForwardContext& context); 
 	bool Backward(CudaTensor& delta);
-	virtual void GetPrevModules(const XMLElement* element, bool add_channels = true);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
 	uint32_t GetFlops() const { return 0; }
 };
 
@@ -229,7 +215,45 @@ public:
 	SSDModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	~SSDModule();
 	bool Forward(ForwardContext& context);
-	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const;
+	bool Backward(CudaTensor& delta); 
 	uint32_t GetFlops() const { return 0; }
+};
+// just for placeholder 
+class ConcatModule : public InferenceModule { 
+public:
+	ConcatModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	uint32_t GetFlops() const { return 0; }
+	bool Resize(int w, int h);
+	bool Forward(ForwardContext& context);
+	bool Backward(CudaTensor& delta); 
+	 
+};
+class SplitModule: public InferenceModule {
+protected:
+	int groups;
+	CudaTensor* forward_input;
+	vector<CudaTensor> outputs;
+	vector<CudaTensor> deltas;
+public:
+	SplitModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	uint32_t GetFlops() const { return 0; }
+	bool Resize(int w, int h);
+	bool Forward(ForwardContext& context); 
+	bool Backward(CudaTensor& delta);
+	CudaTensor& GetOutput(int gid) { return outputs[gid]; }
+	CudaTensor& GetShortcutDelta(int gid) { return deltas[gid]; }
+	bool ShortcutDelta(const CudaTensor& d, int group_id);
+	int OutputCount() const { return groups; }
+};
+
+class ShuffleModule :public InferenceModule {
+protected:
+	int groups;
+public:
+	ShuffleModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	uint32_t GetFlops() const { return 0; }
+	bool Resize(int w, int h);
+	bool Forward(ForwardContext& context);
+	bool Backward(CudaTensor& delta);
+
 };

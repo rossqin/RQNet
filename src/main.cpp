@@ -136,19 +136,8 @@ bool dump_weight(const char* weight_file, const char* output_dir) {
 	return weights_pool.DumpAsExcels(output_dir);
 }
 bool convert_openvino(const char*  network_definition, const char* weights_path, const char* data_type, const char* ouput_dir ,const char* name ) {
- 
-	cudnnDataType_t t = CUDNN_DATA_DOUBLE;
-	if (data_type && *data_type) {
-		string s(data_type);
-		if (s == "FP32")
-			t = CUDNN_DATA_FLOAT;
-		else if (s == "FP16")
-			t = CUDNN_DATA_HALF;
-		else {
-			cerr << " Warning: unrecognized data type `" << data_type << "`! Use default data type defined in network configuration.\n";
-		}
-	}
-
+  
+	
 	string dir(ouput_dir);
 	if (dir.empty()) {
 		dir = network_definition;
@@ -163,7 +152,7 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 		}
 	}
 	CNNNetwork network;
-	if (!network.Load(network_definition, t)) {
+	if (!network.Load(network_definition, CUDNN_DATA_FLOAT)) {
 		cerr << "Error: Cannot load network definition file " << network_definition << endl;
 		return false;
 	}
@@ -175,9 +164,8 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 	if (s_name.empty()) {
 		s_name = get_file_name(network_definition);
 		replace_extension(s_name, ".ir");
-	}
-	int l_index = 1;
-	if (!network.OutputIRModel(dir, s_name, l_index)) {
+	} 
+	if (!network.CreateOpenVINOIRv7(dir, s_name, (_strcmpi("FP16", data_type) == 0))) {
 		cerr << "Error: Create Failed!\n";
 		return false;
 	}
@@ -206,7 +194,10 @@ ArgDef defs[] = {
 	{ "-c","",  false, darknet_message },
 	{ "-t","", false, "data type: FP32 or FP16"},
 	{ "-r","", false, "prediction confidence threshold" },
-	{ "-restart", "false",false, ""}
+	{ "-restart", "false",false, ""},
+	{ "-name", "ir", false, "IR file name.\n"},
+	{"-p","FP16", false,"Precision, FP16 or FP32, default is FP16\n"}
+
 }; 
 
 static void parse_cmd_line(int argc, char* argv[]) {
@@ -229,14 +220,7 @@ static void parse_cmd_line(int argc, char* argv[]) {
 int main(int argc, char* argv[]) { 
 #ifdef _DEBUG
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-#endif	 
-	/*float tests[10];
-	float pred = 0.0;
-	for (int i = 0; i < 10; i++) {
-		pred += 0.1f;
-		tests[i] = (1.0f - pred) * focal_loss_delta(pred,0.5f, 2.0f);
-		
-	} */
+#endif
 	cudaError_t err = cudaGetDeviceCount(&gpu_device_cnt);
 	cout << " " << gpu_device_cnt << " GPU detected." << endl << endl;
 	if (argc < 3) {
@@ -274,7 +258,8 @@ int main(int argc, char* argv[]) {
 	const char* FLAGS_c = defs[5].param;
 	const char* FLAGS_t = defs[6].param;
 	const char* FLAGS_r = defs[7].param;
-
+	const char* FLAGS_name = defs[9].param;
+	const char* FLAGS_p = defs[10].param;
 	bool ret = false;
 	
 	
@@ -306,7 +291,7 @@ int main(int argc, char* argv[]) {
 		ret = network.weights_pool.TransformDarknetWeights(FLAGS_c, FLAGS_w, FLAGS_o); 
 	}
 	else if (strcmp(command, "openvino") == 0) {
-		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_d, FLAGS_o, FLAGS_t);
+		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_p, FLAGS_o, FLAGS_name);
 	}
 	else {
 		show_usage(exe);

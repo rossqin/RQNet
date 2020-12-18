@@ -57,12 +57,34 @@ PoolingModule::PoolingModule(const XMLElement * element, Layer * l,CNNNetwork* n
 		}
 	}
 
-	GetPrevModules(element);
+	ParsePrevModules(element);
 
-	mode = CUDNN_POOLING_MAX;
-	if (t == "avg-pool") mode = CUDNN_POOLING_AVERAGE_COUNT_INCLUDE_PADDING;
+	mode = CUDNN_POOLING_MAX; 
+	if (t == "avg-pool") 
+		mode = CUDNN_POOLING_AVERAGE_COUNT_INCLUDE_PADDING;
 	output_channels = input_channels;	 
 	Resize(input_width, input_width);
+	ir_type = "Pooling";
+
+	char buffer[32];
+	//ir_params["auto_pad"] ="same_upper";
+	ir_params["exclude-pad"] = "true";
+
+	ir_params["pool-method"] = (CUDNN_POOLING_MAX == mode) ? "max" : "avg";
+
+	sprintf_s(buffer, 32, "%u,%u", window_h, window_w);
+	ir_params["kernel"] = buffer;
+
+
+	sprintf_s(buffer, 32, "%u,%u", pad_ht, pad_wl);
+	ir_params["pads_begin"] = buffer;
+
+	sprintf_s(buffer, 32, "%u,%u", pad_hb, pad_wr);
+	ir_params["pads_end"] = buffer;
+
+	sprintf_s(buffer, 32, "%u,%u", stride_h, stride_w);
+	ir_params["strides"] = buffer;
+
 	
 }
 
@@ -71,45 +93,38 @@ PoolingModule::~PoolingModule() {
 }
 extern bool forward_maxpool(CudaTensor& output, const CudaTensor& input, int* indexes,
 	int window, int stride , int pad);
+extern bool forward_avgpool(CudaTensor& output, const CudaTensor& input, int window, int stride, int pad);
 bool PoolingModule::Forward(ForwardContext & context) { 
-	if (!InferenceModule::Forward(context)) {
-		cerr << " Error: " << name << " foward failed! \n";
-		return false;
-	}
-	if (mode != CUDNN_POOLING_MAX) return false;
-
-	
+	if (!InferenceModule::Forward(context))	return false;
+	  
 	int window = (window_h << 16) + (window_w & 0xffff);
 	int stride = (stride_h << 16) + (stride_w & 0xffff); 
 	int pad = (pad_wl << 24) + ((pad_wr & 0xff) << 16) + ((pad_ht & 0xff) << 8) + (pad_hb & 0xff);
-	CudaTensor& in = context.input ? *(context.input)  : input ;
-	bool r = forward_maxpool(output, in, indexes, window, stride, pad);
-	//input.Release();
-	return r;
+	bool ret = false;
+	if (mode == CUDNN_POOLING_MAX)
+		ret = forward_maxpool(output, *(context.input), indexes, window, stride, pad);
+	else 
+		ret = forward_avgpool(output, *(context.input), window, stride, pad);
+
+	return ret;
 }
 extern bool backward_maxpool(CudaTensor& dx, const CudaTensor& dy, int* indexes, int window, int stride, int pad);
+extern bool backward_avgpool(CudaTensor& dx, const CudaTensor& dy, int window, int stride, int pad);
 bool PoolingModule::Backward(CudaTensor & delta) {
 	if (!InferenceModule::Backward(delta)) return false;
 	CudaTensor temp = delta;
-	if (!delta.Init(network->MiniBatch(), input_channels, input_height, input_width)) return false;
+	if (!delta.Init({ network->MiniBatch(), input_channels, input_height, input_width })) return false;
 	int window = (window_h << 16) + (window_w & 0xffff);
 	int stride = (stride_h << 16) + (stride_w & 0xffff);
 	int pad = (pad_wl << 24) + ((pad_wr & 0xff) << 16) + ((pad_ht & 0xff) << 8) + (pad_hb & 0xff);
-	if (!backward_maxpool(delta, temp, indexes, window, stride, pad)) return false;	
+	if (mode == CUDNN_POOLING_MAX) {
+		if (!backward_maxpool(delta, temp, indexes, window, stride, pad)) return false;
+	}
+	else {
+		if (!backward_avgpool(delta, temp,  window, stride, pad)) return false;
+	}
 	return DistributeDeltas(delta);
-}
-bool PoolingModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const {
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset,l_index)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Pooling\">" << endl;
-	xml << "      <data auto_pad=\"valid\" exclude-pad=\"true\" kernel=\"" << window_h << "," << window_w;
- 
-	xml << "\" pads_begin=\""<< pad_ht <<"," << pad_wl <<"\" pads_end=\"" << pad_hb << "," << pad_wr << "\" pool-method=\"max\" strides=\""
-			<< stride_h << "," << stride_w << "\" />" << endl;
-	 
-	WritePorts(xml); 
-	xml << "    </layer>" << endl;
-	return true;
-}
+}  
 uint32_t PoolingModule::GetFlops() const {
-	return 0;
+	return  window_h * window_w * input_channels * output_height * output_width; 
 }

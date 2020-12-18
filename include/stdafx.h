@@ -46,6 +46,9 @@
 
 #include <stdint.h>
 
+#ifndef M_PI
+#define M_PI       3.14159265358979323846f   // pi
+#endif
 
 const float EPSILON = 0.00001f;
 using namespace std;
@@ -93,4 +96,5 @@ bool make_sure_dir_exists(const char* path);
 #define ROTATE_TYPE_COUNT 6
 enum RotateType { NotRotate, ToLeft, ToRight, HorizFlip, VertiFlip, Rotate180 };
 const char* rotate_to_str(RotateType rt);
+void parse_integers(vector<int>& result, const string& str);
 #endif

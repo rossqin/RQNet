@@ -57,11 +57,8 @@ protected:
 
 	bool save_input;
 	bool neg_mining ;
-	string input_dir;
 
 	int save_weight_interval;
-	string weight_file_prefix;
-	string out_dir;
 	
 
 	//da augmentation
@@ -91,7 +88,9 @@ protected:
 	SgdConfig sgd_config;
 	float decay;
 
-
+	bool training_show_layers;
+	bool use_ciou_loss;
+	bool adversarial;
 
 	//return dataset name
 	const char* LoadTrainingSection(XMLElement* root); 
@@ -111,7 +110,6 @@ public :
   
 	inline int  GetLastIteration() const { return stop_interation; }
 	inline bool SaveInput() const { return save_input; }
-	inline const string& SaveInputDir() const { return input_dir; }
 	inline bool NeedNegMining() const { return neg_mining; }
 
 	inline float GetJitter() const { return da_jitter; }
@@ -137,16 +135,17 @@ public :
 	inline bool FocalLoss() const { return focal_loss; } 
 
 	inline bool FastResize() const { return fast_resize; }
-	inline int GetDatasetCount() const { return datasets.size(); }
+	inline int GetDatasetCount() const { return (int)datasets.size(); }
 
 	inline ParamsUpdatePolicy UpdatePolicy() const { return update_policy; }
 	const Dataset* GetDataSet(int i = 0) const;
 	bool RadmonScale(uint32_t it, int& new_width, int& new_height) const;
-	
-	bool GetWeightsPath(uint32_t it, string& filename) const ; 
+
+	inline bool SaveIteration(uint32_t it) const { return (save_weight_interval > 0) && (it % save_weight_interval) == 0; }
 	float GetCurrentLearningRate(int iteration) const;
 	
-
+	inline bool UseCIoULoss() const { return use_ciou_loss; }
+	inline bool Adversarial() const { return adversarial; }
 	
 }; 
 AppConfig& GetAppConfig();

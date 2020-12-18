@@ -7,27 +7,21 @@ CudaTensor::CudaTensor(const CudaTensor & right) {
 	data_format = right.data_format;
 	data_type = right.data_type;
 	byte_per_element = right.byte_per_element;
-	n = right.n;
-	c = right.c;
-	h = right.h;
-	w = right.w; 
+	dims = right.dims;
 	gpu_data = nullptr;
 	elements = right.elements;
 	bytes = right.bytes;
 	desc = nullptr;
 	bad_flag = true;
 	cudnnCreateTensorDescriptor(&desc);
-	if(CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(desc, data_format, data_type, n, c, h, w))
+	if(CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(desc, data_format, data_type, dims.n, dims.c, dims.h, dims.w))
 		return ;
 	cudaMalloc(&gpu_data, bytes);
 	bad_flag = (cudaSuccess != cudaMemcpy(gpu_data, right.gpu_data, bytes, cudaMemcpyDeviceToDevice)); 
 }
 
 CudaTensor::CudaTensor(cudnnDataType_t t, cudnnTensorFormat_t f) {
-	n = 0;
-	c = 0;
-	h = 0;
-	w = 0;
+	dims = { 0 };
 	data_format = f;
 	data_type = t;
 	gpu_data = nullptr;
@@ -55,12 +49,12 @@ CudaTensor::~CudaTensor() {
 	if (gpu_data) cudaFree(gpu_data);
 }
 char* CudaTensor::BatchData(int b) const {
-	if(!gpu_data || b < 0 || b>= n) return nullptr; 
+	if(!gpu_data || b < 0 || b>= dims.n) return nullptr;
 	return reinterpret_cast<char*>(gpu_data) + b *(Elements3D() * byte_per_element);
 }
-bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
+bool CudaTensor::Init(const TensorDims& d) {
 	
-	if (n_ == n && c_ == c && h_ == h && w_ == w) {
+	if (dims == d) {
 		if (bytes != elements * byte_per_element) {
 			bytes = elements * byte_per_element;
 			cudaFree(gpu_data);
@@ -79,12 +73,9 @@ bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 		if(CUDNN_STATUS_SUCCESS != cudnnCreateTensorDescriptor(&desc))
 			return false;
 	}
-	n = n_;
-	c = c_;
-	h = h_;
-	w = w_;
+	dims = d;
 	 
-	elements = n * c * h * w;
+	elements = d.n * d.c * d.h * d.w;
 	bytes =  elements * byte_per_element;
 	bad_flag = true;
 	cudaError_t err = cudaMalloc(&gpu_data, bytes);
@@ -93,7 +84,7 @@ bool CudaTensor::Init(int n_, int c_, int h_, int w_) {
 		elements = 0;
 		return false;
 	}
-	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(desc, data_format, data_type, n, c, h, w)) {
+	if (CUDNN_STATUS_SUCCESS != cudnnSetTensor4dDescriptor(desc, data_format, data_type, d.n, d.c, d.h, d.w)) {
 		elements = 0;
 		return false;
 	}
@@ -107,7 +98,7 @@ const CudaTensor& CudaTensor::operator=(const CudaTensor& right) {
 	byte_per_element = right.byte_per_element;
 	data_format = right.data_format;
 	data_type = right.data_type;
-	if (!Init(right.n, right.c, right.h, right.w)) {
+	if (!Init(right.dims)) {
 		bad_flag = true;
 		return *this;
 	}
@@ -194,7 +185,7 @@ bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
 	else {
 		if (data_type == stored_t) {
 			if(cudaSuccess != cudaMemcpy(gpu_data, temp, header.bytes, cudaMemcpyDeviceToDevice)) return false;
-			if (stored_w == w && stored_h == h) {
+			if (stored_w == dims.w && stored_h == dims.h) {
 				int left = bytes - header.bytes;
 				char* dst = reinterpret_cast<char*>(gpu_data) + header.bytes;
 				while (left > 0) {
@@ -218,7 +209,7 @@ bool CudaTensor::Push(const char* cpu_data, const tensor_data_header& header) {
 		CpuPtr<float> ptr(left); 
 		float* buffer = ptr.ptr;
 		for (int i = 0; i < left; i++) {
-			buffer[i] = rand_uniform_strong(-0.5, 0.5);
+			buffer[i] = rand_uniform_strong(-0.1f, 0.1f);
 		}
 		if (data_type == CUDNN_DATA_FLOAT) {
 			float* dst = reinterpret_cast<float*>(gpu_data) + stored_elements;
@@ -252,13 +243,13 @@ bool CudaTensor::Pull(float * cpu_data, int pos, int length) const {
 		}
 		else {
 			float* src = reinterpret_cast<float *>(gpu_data) + pos;
-			e = cudaMemcpy(cpu_data, src, length * sizeof(float), cudaMemcpyHostToDevice);
+			e = cudaMemcpy(cpu_data, src, length * sizeof(float), cudaMemcpyDeviceToHost);
 			if (cudaSuccess != e) throw (int)e;
 		}
 
 	}
 	catch (int err) {
-		cerr << "Error: CudaTensor.Push ret " << err << endl;
+		cerr << "Error: CudaTensor.Pull ret " << err << endl;
 		r = false;
 	}
 	if (buffer) cudaFree(buffer);
@@ -267,11 +258,11 @@ bool CudaTensor::Pull(float * cpu_data, int pos, int length) const {
 
 bool CudaTensor::Concat(const vector<const CudaTensor*>& src) {
 	int copied = 0;
-	for (int i = 0; i < n; i++) {
+	for (int i = 0; i < dims.n; i++) {
 		char* dest_mem = BatchData(i);
 		for (int j = 0; j < (int)src.size(); j++) {
 			const CudaTensor* s = src[j];
-			if (h != s->h || w != s->w) {
+			if (dims.h != s->dims.h || dims.w != s->dims.w) {
 				return false;
 			}
 			char *src_mem = s->BatchData(i);
@@ -290,11 +281,11 @@ bool CudaTensor::Concat(const vector<const CudaTensor*>& src) {
 
 bool CudaTensor::Split(const vector<CudaTensor*>& dest) const {
 	int copied = 0;
-	for (int i = 0; i < n; i++) {
+	for (int i = 0; i < dims.n; i++) {
 		char* src_mem = BatchData(i);
 		for (int j = 0; j < (int)dest.size(); j++) {
 			CudaTensor* s = dest[j];
-			if (h != s->h || w != s->w) return false;
+			if (dims.h != s->dims.h || dims.w != s->dims.w) return false;
 			char *dest_mem = s->BatchData(i);
 			int copy_bytes = s->Elements3D() * s->byte_per_element;
 			if (cudaSuccess != cudaMemcpy(dest_mem, src_mem, copy_bytes, cudaMemcpyDeviceToDevice)) return false;
@@ -315,10 +306,7 @@ bool CudaTensor::Release() {
 		gpu_data = nullptr;
 
 	}
-	n = 0;
-	c = 0;
-	h = 0;
-	w = 0;
+	dims = { 0 };
 	bytes = 0;
 	elements = 0;
 	return cudaSuccess == err; 
@@ -327,7 +315,7 @@ bool CudaTensor::Release() {
 bool CudaTensor::Randomize() {
 	if (elements == 0) return true;
 	unique_ptr<float> ptr( New float[elements]);
-	uniform_real_distribution<double> uniform(0, 1.0f / elements);
+	uniform_real_distribution<double> uniform(0, 0.25f / elements);
 	default_random_engine engine;
 	engine.seed(chrono::system_clock::now().time_since_epoch().count());
 
@@ -349,11 +337,11 @@ bool CudaTensor::Save(const char * filename, int batch) {
 	if (!f.is_open()) return false;
 	int write_len = bytes;
 	char* gpu_buffer = reinterpret_cast<char*>(gpu_data);
-	if (batch >= 0 && batch < n) {
-		write_len = c * h * w * byte_per_element;
+	if (batch >= 0 && batch < dims.n) {
+		write_len = dims.c * dims.h * dims.w * byte_per_element;
 		gpu_buffer += (batch * write_len);
 	}
-	char* buffer = new char[write_len];
+	char* buffer = New char[write_len];
 	unique_ptr<char> temp(buffer);
 	cudaError_t e = cudaMemcpy(buffer, gpu_buffer, write_len, cudaMemcpyDeviceToHost);
 	if (e != cudaSuccess) {
@@ -370,50 +358,56 @@ bool CudaTensor::DisplayInFile(const char * filename, int batch) {
 	ofstream f(filename, ios::trunc);
 	if (!f.is_open()) return false;
 	int batch_start = 0;
-	int batch_stop = n;
-	if (batch >= 0 && batch < n) {
+	int batch_stop = dims.n;
+	if (batch >= 0 && batch < dims.n) {
 		batch_start = batch;
 		batch_stop = batch + 1;
 	}
+	int c_elem = dims.h * dims.w;
+	int b_elem = dims.c * c_elem;
+	CpuPtr<float> buffer_cpu(b_elem);
+	 
+
 	if (data_type == CUDNN_DATA_FLOAT)
-		f << "FP32 [" << n << ", " << c << ", " << h << ", " << w << "]\n";
+		f << "FP32 [" << dims.n << ", " << dims.c << ", " << dims.h << ", " << dims.w << "]\n";
 	else
-		f << "FP16 [" << n << ", " << c << ", " << h << ", " << w << "]\n";
-	int c_size = c * h * w;
-	char temp[200];
-	CudaPtr<float> buffer(c_size);
-	CpuPtr<float> buffer_cpu(c_size);
+		f << "FP16 [" << dims.n << ", " << dims.c << ", " << dims.h << ", " << dims.w << "]\n";
+	
 	
 	for (int b = batch_start; b < batch_stop; b++) {
 		f << "batch: " << b << endl;
 		if (data_type == CUDNN_DATA_FLOAT) {
-			float* src = reinterpret_cast<float*>(gpu_data) + b * c_size;
-			if (cudaSuccess != cudaMemcpy(buffer.ptr, src, c_size * sizeof(float), cudaMemcpyDeviceToDevice)) {
+			float* src = reinterpret_cast<float*>(gpu_data) + b * b_elem;
+			if (cudaSuccess != cudaMemcpy(buffer_cpu.ptr, src, b_elem * sizeof(float), cudaMemcpyDeviceToHost)) {
 				return false;
 			}
 		}
 		else {
-			__half* src = reinterpret_cast<__half*>(gpu_data) + b * c_size;
-			if (!f16_to_f32(buffer, src, c_size))
+			CudaPtr<float> buffer(b_elem);
+			__half* src = reinterpret_cast<__half*>(gpu_data) + b * b_elem;
+			if (!f16_to_f32(buffer, src, b_elem))
 				return false;
-		}
-		if (cudaSuccess != cudaMemcpy(buffer_cpu.ptr, buffer.ptr, c_size * sizeof(float), cudaMemcpyDeviceToHost)) {
-			return false;
-		}
-		for (int i = 0; i < c_size; i++) {
-			if ((i + 1) % w == 0)
-				sprintf(temp, "%.6f \n", buffer_cpu[i]);
-			else 
-				sprintf(temp, "%.6f ", buffer_cpu[i]);
-			f << temp;
-			if ((i + 1) % (h * w) == 0)
-				f << endl;
+			if (cudaSuccess != cudaMemcpy(buffer_cpu.ptr, buffer.ptr, b_elem * sizeof(float), cudaMemcpyDeviceToHost)) {
+				return false;
+			}
+
+		} 
+		for (int i = 0; i < b_elem; i++) {
+			f << fixed << setprecision(4) << buffer_cpu[i] << " "; 
+			if (dims.w > 1) {
+				if ((i + 1) % dims.w == 0)
+					f << endl;
+				if (dims.h > 1) {
+					if ((i + 1) % c_elem == 0)
+						f << endl;
+				}
+			} 
 		}
 		f << endl;
 
 	}
-	f.close();
-	return false;
+	f.close(); //*/
+	return true;
 }
 
 bool CudaTensor::Cache(char *& cpu_data) {

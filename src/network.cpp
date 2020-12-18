@@ -8,22 +8,20 @@
 #include "image.h"
 #include "box.h" 
 #include <direct.h>
+#include "yolo.h"
+#include "OpenVINO.h"
+
  
 CNNNetwork::CNNNetwork() {
 	data_type = CUDNN_DATA_FLOAT; 
-	data_format = CUDNN_TENSOR_NCHW;
-	//workspace = nullptr;
-	//workspace_size = 0;
+	data_format = CUDNN_TENSOR_NCHW; 
 	def_actvation = "leaky";
 	truths = nullptr;
 	input = nullptr;
 	cur_iteration = 0;
-	detection_layers = 2;
-	current_training_rotates = nullptr;
-	tp50 = 0;
-	fp50 = 0;
-	tp75 = 0;
-	fp75 = 0;
+	detection_layers = 2;  
+	nms_type = DEFAULT_NMS;
+	current_training_rotates = nullptr; 
 	 
 }
 
@@ -85,7 +83,7 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 
 	XMLElement* root = doc.RootElement();
 	if (!root) return false;
-	root->QueryText("def-activation", def_actvation); 
+	
 	const char* temp = root->Attribute("name");
 	if (temp) {		
 		name = temp;
@@ -94,6 +92,20 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		name = file_part(filename);
 		replace_extension(name, "");
 	}
+	temp = root->Attribute("nms-type");
+	if (temp) {
+		if (0 == _strcmpi("greedy", temp))
+			nms_type = GREEDY_NMS;
+		else if(0 == _strcmpi("diou", temp))
+			nms_type = DIOU_NMS;
+		else if(0 == _strcmpi("corners", temp))
+			nms_type = CORNERS_NMS;
+	}
+	temp = root->Attribute("default-activation");
+	if (temp) {
+		def_actvation = temp;
+	}
+	 
 	struct stat s = { 0 };
 	stat(name.c_str(), &s);
 	if (0 == (s.st_mode & S_IFDIR)) {
@@ -161,7 +173,7 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	}
 	else {	
 
-			float s_min = 0.2, s_max = 0.9;
+			float s_min = 0.2f, s_max = 0.9f;
 			int scales_count = 6;
 			bool add_default_scale = true;
 			vector<float> aspect_ratios;
@@ -210,13 +222,12 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 			} 
 
 	}
-	XMLElement* layerElement = root->FirstChildElement("layers/layer");
-	int index = 0;
+	XMLElement* layerElement = root->FirstChildElement("layers/layer"); 
 	InferenceModule* last_module = nullptr;
 	while (layerElement) {
 		Layer* layer = NULL;
 		try {
-			layer = New Layer(layerElement, ++index, this, last_module);
+			layer = New Layer(layerElement,  this, last_module);
 			layers.push_back(layer);
 			layerElement = layerElement->NextSiblingElement();
 		}
@@ -294,28 +305,20 @@ bool CNNNetwork::Train(bool restart ) {
 
 	cout << "\n *** Start training from iteration " << (cur_iteration + 1) << "...\n\n";
 	int new_width, new_height;
-	string weights_file;
-	float avg_loss = -1.0;  
-	char info[300];
+	char weights_file[MAX_PATH];
+	float avg_loss = -1.0;   
 	
 	int input_len = mini_batch * input_channels * input_width * input_height * sizeof(float);
 	if(!current_training_rotates) current_training_rotates = New RotateType[mini_batch + 1]; 
-	while (!GetAppConfig().IsLastIteration(cur_iteration)) {
-		loss = 0.0f;
-		output_layers = 0;
-		tp50 = 0;
-		fp50 = 0;
-		tp75 = 0;
-		fp75 = 0; 
+	while (!GetAppConfig().IsLastIteration(cur_iteration)) { 
 		cur_iteration++;
 		clock_t start_clk = clock(); 
-		int total_objects = 0;
-		sprintf_s(info, 300, " :Interation %05d:\n", cur_iteration);
-		cout << info;
+		int total_objects = 0; 
+		training_results.clear();
+		cout << " -- Interation " << cur_iteration << endl;
 		for (int i = 0; i < GetAppConfig().GetSubdivision(); i++, total_images += mini_batch) {
 			
-			current_training_files.clear();
-			//cout << "\nSubdivision " << i << ": loading data ... ";
+			current_training_files.clear(); 
 			long t = GetTickCount(); 
 			memset(input, 0,  input_len);
 			if (!loader.MiniBatchLoad(input, truths, input_channels, mini_batch, input_width, input_height, (int)classes.size(), 
@@ -329,25 +332,34 @@ bool CNNNetwork::Train(bool restart ) {
 			if (!Forward(true)) return false;  
 			if (!Backward()) return false;   
 		}
-		
-		loss /= output_layers;
+		float loss = 0.0f, box_loss = 0.0f, obj_loss = 0.0f, cls_loss = 0.0f, iou = 0.0f;
+		stringstream ss; 
+
+		for (TrainingResult& r : training_results) {
+			loss += (r.obj_loss + r.box_loss + r.cls_loss); 
+			box_loss += r.box_loss;
+			obj_loss += r.obj_loss;
+			cls_loss += r.cls_loss;
+			iou += r.iou;
+		}
+		loss /= training_results.size(); 
+		box_loss /= training_results.size();
+		obj_loss /= training_results.size();
+		cls_loss /= training_results.size();
+		iou /= total_objects;
+
 		if (avg_loss < 0)
 			avg_loss = loss;
 		else
 			avg_loss = avg_loss * 0.9 + loss * 0.1;
-		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
-		//int r50 = tp50 + fp50;
-		int r75 = tp75 + fp75;
-		//if (0 == r50) r50 = 1;
-		if (0 == r75) r75 = 1;
+		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;		 
 		float lr = GetAppConfig().GetCurrentLearningRate(cur_iteration);
-		 
-		float rc = tp75 * 100.0f / total_objects;
-		float pr = tp75 * 100.0f / r75; 
+		cout << "  * loss : " << fixed << setprecision(4) << loss << " [" << obj_loss << "(o)+" << box_loss << "(b)";
+		if (classes.size() > 1)
+			cout << "+" << cls_loss << "(c)";
+		cout << "], avg-loss: " << avg_loss << ", iou: " << iou << ", lr:" << defaultfloat << lr << ", " << ms << "ms, " << total_images << " images.\n\n";
 		
-		sprintf_s(info,300, "  >> Loss: %.4f, Avg-Loss: %.4f ", loss, avg_loss);
-		cout <<info <<"Rate: " << lr << ", " << (ms * 0.001) << "s, total " << total_images << " images.\n\n";
-		 
+		
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
 			//sprintf(info, "")
@@ -358,14 +370,15 @@ bool CNNNetwork::Train(bool restart ) {
 		
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
-		}
-		if (GetAppConfig().GetWeightsPath(cur_iteration, weights_file)) {
-			if (weights_pool.Save(weights_file.c_str(), cur_iteration)) {
-				cout << " INFO: Save weights to `" << weights_file << "` ! \n";
+		} 
+		if (GetAppConfig().SaveIteration(cur_iteration)) {
+			sprintf_s(weights_file, MAX_PATH, "%s/%s-%d.rweights", name.c_str(), def_actvation.c_str(), cur_iteration);
+			if (weights_pool.Save(weights_file, cur_iteration)) {
+ 				cout << " INFO: Save weights to `" << weights_file << "` ! \n";
 			}
 			if (GetAppConfig().UpdatePolicy() == Adam) {
-				replace_extension(weights_file, ".adam.rweights");
-				if (!adam_weights_pool.Save(weights_file.c_str(), cur_iteration)) {
+				sprintf_s(weights_file, MAX_PATH, "%s/%s-%d.adam.rweights", name.c_str(), def_actvation.c_str(), cur_iteration);
+				if (!adam_weights_pool.Save(weights_file, cur_iteration)) {
 					cerr << " Warning: Save adam weights to `" << weights_file << " failed` ! \n";
 				}
 			}
@@ -387,69 +400,114 @@ bool CNNNetwork::Train(bool restart ) {
 	return true;
 }
 
-bool CNNNetwork::OutputIRModel(const string & dir, const string & name, int& l_index) const {
+bool CNNNetwork::CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16) {
+	 
 	string prefix = dir;
-	if (prefix.find_first_of('\\') != prefix.length() - 1 &&
-		prefix.find_first_of('/') != prefix.length() - 1)
+	if (prefix.find_last_of('\\') != prefix.length() - 1 &&
+		prefix.find_last_of('/') != prefix.length() - 1)
 		prefix += SPLIT_CHAR;
-	//TODO: make sure dir exists
-	prefix += name;
 
-	ofstream  xml(prefix + ".xml", ios::trunc);
-	ofstream  bin(prefix + ".bin", ios::binary | ios::trunc);
-	if ((!xml.is_open()) || (!bin.is_open()) ) return false;
-
-	xml << "<?xml version=\"1.0\" ?>" << endl;
-	//TODO: replace " with \" in name 
-	xml << "<net batch=\"1\" name=\""<<name<<"\" version=\"4\">" << endl;
-	xml << "  <layers>" << endl;
-	stringstream edges;
-	size_t bin_offset = 0;
- 
-	xml << "    <layer id=\"0\" name=\"inputs\" precision=\""<< Precision() <<"\" type=\"Input\">" << endl;
-	xml << "        <output>" << endl;
-	xml << "          <port id = \"0\">" << endl;
-	xml << "            <dim>" << 1 << "</dim>" << endl;
-	xml << "            <dim>" << input_channels << "</dim>" << endl;
-	xml << "            <dim>" << input_height << "</dim>" << endl;
-	xml << "            <dim>" << input_width << "</dim>" << endl;
-	xml << "          </port>" << endl;
-	xml << "        </output>" << endl;
-	xml << "    </layer>" << endl;
- 
-	for (size_t i = 0; i < layers.size(); i++) {
-		Layer* l = layers[i];
-		if (!l->FuseBatchNormModule()) {
-			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n"; 
-			return false;
-		}
-		if (!(l->OutputIRModel(xml, bin, edges, bin_offset, l_index))) {
+	struct stat s = { 0 };
+	stat(prefix.c_str(), &s);
+	if (!(s.st_mode & _S_IFDIR)) {
+		if (!_mkdir(prefix.c_str())) {
+			cerr << "\n Error: Failed to create directory `" << prefix.c_str() << "`!\n\n";
 			return false;
 		}
 	}
+	prefix += ir_name;
+	vector<InferenceModule*> modules;
+	InferenceModule* last_mod = nullptr;
+	 
+	for (auto l : layers) {
+		if (!l->FuseBatchNormModule()) {
+			cerr << " Error: FuseBatchNorm failed in  " << l->GetName() << "!\n";
+			return false;
+		}
+		for (auto m : l->modules) {
+			if (!dynamic_cast<BatchNormModule*>(m)) {
+				modules.push_back(m);
+				
+			}
+		}
+	}
+	vector<OpenVINOIRv7Layer> ir_layers;
+	vector<OpenVINOIRv7Edge> ir_edges;
 
-	xml << "  </layers>" << endl;	
-	xml << "  <edges>" << endl;
+	OpenVINOIRv7Layer inputs(0, "inputs", "Input", "FP32") ;	 
+	inputs.outputs.push_back({ 0,1,input_channels, input_height, input_width });
+	ir_layers.push_back(inputs);
 
-	xml << edges.str();
-
-	xml << "  </edges>" << endl;
-	xml << "  <meta_data>" << endl;
-	//TODO: write meta data
-	xml << "  </meta_data>" << endl;
-	xml << "</net>" << endl;
-	xml.close();
+	ofstream  xml(prefix + ".xml", ios::trunc);
+	ofstream  bin(prefix + ".bin", ios::binary | ios::trunc);
+	if ((!xml.is_open()) || (!bin.is_open())) return false;
+	size_t offset = 0;
+	for (auto m : modules) {
+		if (!m->RenderOpenVINOIR(ir_layers, ir_edges, bin, offset,fp16)) {
+			cerr << "\n Error: Render IR failed for " << m->Name() << "!\n";
+			return false;
+		}
+	}
 	bin.close();
+ 
+	//TODO: check duplicated split modules
+	int index =  ir_layers.size() - 1;
+	while(index > 0) {
+		OpenVINOIRv7Layer& l_p = ir_layers[index - 1];
+		OpenVINOIRv7Layer& l = ir_layers[index];
 
+		if (l.ltype == "Split" && l_p.ltype == "Split") {
+			// remove l
+			int remove_id = l.id; 
+			int replace_id = l_p.id;
+			ir_layers.erase(ir_layers.begin() + index);
+			for (auto& e : ir_edges) {
+				if (e.from_layer == remove_id) e.from_layer = replace_id;
+				if (e.to_layer == remove_id) e.to_layer = -1;
+			}
+		} 
+		index--;
+	} 
+	xml << "<?xml version=\"1.0\" ?>\n";
+	xml << "<net batch = \"1\" name=\"" << ir_name << "\" version=\"7\">\n\t<layers>\n";
+
+	for (OpenVINOIRv7Layer& l : ir_layers) {
+		xml << l;
+	}
+
+	xml << "\t</layers>\n\t<edges>\n";
+
+	for (OpenVINOIRv7Edge& e : ir_edges) {
+		if (e.to_layer > 0) {
+			xml << e;
+		}
+	}
+	xml << "\t</edges>\n\t<meta_data>\n\t</meta_data>\n</net>";
+	xml.close();
+
+	xml.open(prefix + ".yolo.xml", ios::trunc);
+	xml << "<?xml version=\"1.0\" ?>\n";
+	xml << "<net version=\"1.0\" >\n\t<classes>\n"; 
+	for (auto& c : classes) {
+		xml << "\t\t<class>" << c << "</class>\n";
+	}
+	xml << "\t</classes>\n\t<anchors>\n";
+	for (auto& a : anchors) {
+		xml << "\t\t<anchor width=\"" << a.first << "\" height=\"" << a.second << "\" />\n";
+	}
+	xml << "\t</anchors>\n\t<outputs>\n";
+	for (auto m : modules) {
+		m->WriteOpenVINOOutput(xml);
+	}
+	xml << "\t</outputs>\n</net>\n";
+	xml.close();
 	return true;
-}
+} 
 void CNNNetwork::GetAnchorsStr(string & str) const {
 	str = "";
 	for (int i = 0; i < (int)anchors.size(); i++) {
-		auto& a = anchors[i];
-		int w = (int)(a.first * 416.0f);
-		int h = (int)(a.second * 416.0f);
-		str += to_string(w) + "," + to_string(h);
+		auto& a = anchors[i]; 
+		str += to_string((int)a.first) + "," + to_string((int)a.second);
 		if (i != (int)anchors.size() - 1) {
 			str += ",";
 		}
@@ -600,17 +658,23 @@ bool CNNNetwork::Detect(const char* path) {
 			cerr << "\nError: Cannot load image `" << filename << "`!\n";
 			return false;
 		}
-		Image image(reinterpret_cast<uint8_t*>(mat.data), mat.cols, mat.rows, mat.channels());
-
-		if (!image.ResizeTo(input_width, input_height) ||
-			!image.PullFromGPU()) {
-			cerr << " Error: failed to resize image to " << input_width << " x " <<
-				input_height << " detection task!\n";
-			return false;
-		}
 		if (input) delete[]input;
-		input = image.GetData();
-		input_channels = image.GetChannels();
+
+		cv::Size sz(input_width, input_height);
+		cv::Mat temp = cv::Mat::zeros(sz, CV_8UC3);
+		resize(mat, temp, sz);
+
+		input_channels = temp.channels();
+		CpuPtr<float> buffer(input_channels * input_width * input_height);
+		input = buffer.ptr;
+		int index = 0;
+		for (size_t c = 0; c < input_channels; c++) {
+			for (size_t h = 0; h < input_height; h++) {
+				for (size_t w = 0; w < input_width; w++) {
+					input[index++] = (float)temp.at<cv::Vec3b>(h, w)[c] / 255.0f;
+				}
+			}
+		}
 
 		ForwardContext context = { false, false, false, nullptr };
 		detections.clear();
@@ -905,7 +969,7 @@ bool CNNNetwork::Eval_old() {
 			img.PullFromGPU();
 			
 			int index = 0;
-			for (float th = 0.5; th < 1.0f; th += 0.05,index ++) {
+			for (float th = 0.5; th < 1.0f; th += 0.05f,index ++) {
 				detections.clear();
 				input = img.GetData();
 				GetAppConfig().ThreshHold(th);

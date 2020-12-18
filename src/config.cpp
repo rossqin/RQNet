@@ -24,9 +24,9 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	const char* dataset_name = te->GetText("dataset");
 	te->QueryIntText("termination", stop_interation);
 	te->QueryBoolText("focal-loss", focal_loss);
+	te->QueryBoolText("ciou-loss", use_ciou_loss);
+	te->QueryBoolText("adversarial", adversarial);
 	te->QueryIntText("weights/save", save_weight_interval);
-	te->QueryText("weights/output-dir", out_dir);
-	te->QueryText("weights/prefix", weight_file_prefix);
 	te->QueryFloatText("weights/momentum", sgd_config.momentum);
 	te->QueryFloatText("weights/decay", decay);
 
@@ -81,20 +81,6 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 		te->QueryFloatText("learning-rate/epsilon", adam_config.epsilon);
 	}
 	te->QueryBoolText("save-input", save_input);
-	te->QueryText("input-files-dir", input_dir);
-	if (input_dir.find_last_of('/') != input_dir.length() &&
-		input_dir.find_last_of('\\') != input_dir.length())
-		input_dir += SPLIT_CHAR;
-
-	struct stat s = { 0 };
-	stat(input_dir.c_str(), &s);
-	if (0 == (s.st_mode & S_IFDIR)) {
-		int err = _mkdir(input_dir.c_str());
-		if (err) {
-			cerr << "Error: Try making directory `" << input_dir.c_str() << "` failed! \n";
-			save_input = false;
-		}
-	} 
 
 	const XMLElement* ms = te->FirstChildElement("multi-scale");
 	if (ms) {
@@ -116,11 +102,8 @@ AppConfig::AppConfig() {
 	focal_loss = true;
 
 	save_input = false;
-	input_dir = "network_input";
 
 	save_weight_interval = 100 ;
-	weight_file_prefix = "rq_weights_";
-	out_dir = "backup/";
 
 	//da augmentation
 	da_jitter = 0.0;
@@ -146,6 +129,9 @@ AppConfig::AppConfig() {
 	mns_thresh_hold = 0.8f;
 	decay = 0.0005f;
 	neg_mining = true;
+
+	use_ciou_loss = true;
+	adversarial = false;
 }
 
 AppConfig::~AppConfig() {
@@ -231,30 +217,7 @@ bool AppConfig::RadmonScale(uint32_t it, int & new_width, int & new_height) cons
 	return true;
 }
  
-bool AppConfig::GetWeightsPath(uint32_t it, string & filename) const {
-	if ((save_weight_interval > 0) && (it % save_weight_interval) == 0) {
-		struct stat s = { 0 };
-		ostringstream os;
-		stat(out_dir.c_str(), &s);
-		if (0 == (s.st_mode & S_IFDIR)) {
-			int err = _mkdir(out_dir.c_str());
-			if (err) {
-				cerr << "Error: Try making directory `" << input_dir.c_str() << "` failed! \n";
-				return false;
-			}
-		}
-		char ch = out_dir[out_dir.length() - 1];
-		if(ch == '/' || ch == '\\')
-			os << out_dir << weight_file_prefix << it << ".rweights";
-		else
-			os << out_dir << "/" << weight_file_prefix << it << ".rweights";
-		filename = os.str();
-		return true;
-	}
-	return false;
-	 
-}
- 
+
 
 float AppConfig::GetCurrentLearningRate(int iteration) const { 
 	if (update_policy == Adam)

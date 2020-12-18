@@ -211,7 +211,30 @@ void split_string(vector<string>& result, const string& str, char ch) {
 		off = pos + 1;
 	}
 }
-
+void parse_integers(vector<int>& result, const string& str) {
+	char buffer[32];
+	int pos = 0;
+	const char* s = str.c_str();
+	const char* end = s + str.length();
+	while (s < end) {
+		if (*s >= '0' && *s <= '9') {
+			buffer[pos++] = *s;
+		}
+		else {
+			buffer[pos] = 0;
+			if (pos > 0) {
+				result.push_back(atoi(buffer));
+				pos = 0;
+			}
+		}
+		s++;
+	}
+	
+	if (pos > 0) {
+		buffer[pos] = 0;
+		result.push_back(atoi(buffer));
+	}
+}
 const char* replace_extension(string& str, const char* new_ext) {
 	size_t pos = str.find_last_of('.');
 	if (string::npos == pos) {
@@ -242,7 +265,7 @@ void show_usage(const char* bin) {
 	cout << "  To detect objects in video:\n    " << bin << " demo -n <path/to/network/defintion> -w <path/to/weights> [-i <path/to/vedio>]\n";
 	cout << "\n       If input file is not given, then use a camera.\n\n\n";
 	cout << "  To convert .weights file to .rweights files:\n    " << bin << " wconv -c <path/to/darknet/network/config> -w <path/to/darknet/weights> [-o <dir/of/output>]\n\n\n";
-	cout << " To create openvino IR models\n    " << bin << " openvino -n <path/to/RQNet/network/definition> -w <path/to/rweights> -d <FP32|FP16> -o <dir/of/output> -t <modeltitle>\n"; 
+	cout << " To create openvino IR models\n    " << bin << " openvino -n <path/to/RQNet/network/definition> -w <path/to/rweights> -d <FP32|FP16> -o <dir/of/output> -name <modeltitle>\n"; 
 	cout << " *** ATTENSION ***\n\n";
 	cout << " This program is running only with CUDA support!\n\n";
 
@@ -302,7 +325,7 @@ const char* rotate_to_str(RotateType rt) {
 
 float focal_loss_delta(float pred, float alpha, float gamma) {
  
-	float pt = fmaxf(pred, 0.0000001);
+	float pt = fmaxf(pred, 0.0000001f);
 	//float grad = alpha * (gamma * (pred - 1.0f) * logf(pt)* pred + (1.0f - pred)*(1.0f - pred));
 	float grad = alpha * (pt - 1.0f) *(gamma * pt * logf(pt) + pt - 1.0f); //
 	//float focal_grad = alpha * (pred - 1.0f) * (gamma * pred * logf(pred) + pred - 1.0f);

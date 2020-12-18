@@ -155,11 +155,11 @@ __global__ void tensor_downsample_kernel(void* dst_mem, int width, int height, v
 bool CudaTensor::UpSample(CudaTensor& output, int stride_w, int stride_h) {
 	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
 
-	int w_o = w * stride_w;
-	int h_o = h * stride_h;
+	int w_o = dims.w * stride_w;
+	int h_o = dims.h * stride_h;
 
-	if (output.n != n || output.c != c || output.w != w_o || output.h != h_o) {
-		cerr << " Error: Wrong result demension in tensor upsample !\n";
+	if (output.dims.n != dims.n || output.dims.c != dims.c || output.dims.w != w_o || output.dims.h != h_o) {
+		cerr << " Error: Wrong result dimension in tensor upsample !\n";
 		return false;
 	}
 	if (output.data_type != data_type || output.data_format != data_format) {
@@ -171,7 +171,7 @@ bool CudaTensor::UpSample(CudaTensor& output, int stride_w, int stride_h) {
 	switch (data_type) {
 	case CUDNN_DATA_FLOAT:
 	case CUDNN_DATA_HALF:
-		tensor_upsample_kernel<<<g,b>>>(output.gpu_data, output.w, output.h, gpu_data, n, c, stride_w, stride_h, data_type, data_format);
+		tensor_upsample_kernel<<<g,b>>>(output.gpu_data, output.dims.w, output.dims.h, gpu_data, dims.n, dims.c, stride_w, stride_h, data_type, data_format);
 		break;
 	default:
 		cerr << " Error: Only support FP16 or FP32!\n";
@@ -188,10 +188,10 @@ bool CudaTensor::UpSample(CudaTensor& output, int stride_w, int stride_h) {
 bool CudaTensor::DownSample(CudaTensor& output, int stride_w, int stride_h) {
 	if (stride_w <= 0 || stride_w <= 0 || 0 == elements) return false;
 
-	int w_o = w / stride_w;
-	int h_o = h / stride_h;
+	int w_o = dims.w / stride_w;
+	int h_o = dims.h / stride_h;
 
-	if (output.n != n || output.c != c || output.w != w_o || output.h != h_o) {
+	if (output.dims.n != dims.n || output.dims.c != dims.c || output.dims.w != w_o || output.dims.h != h_o) {
 		cerr << " Error: Wrong result demension in tensor upsample !\n";
 		return false;
 	}
@@ -205,7 +205,7 @@ bool CudaTensor::DownSample(CudaTensor& output, int stride_w, int stride_h) {
 	switch (data_type) {
 	case CUDNN_DATA_FLOAT:
 	case CUDNN_DATA_HALF:
-		tensor_downsample_kernel <<<g, b>>>(output.gpu_data, output.w, output.h, gpu_data, n, c, stride_w, stride_h, data_type, data_format);
+		tensor_downsample_kernel <<<g, b>>>(output.gpu_data, output.dims.w, output.dims.h, gpu_data, dims.n, dims.c, stride_w, stride_h, data_type, data_format);
 		break;
 	default:
 		cerr << " Error: Only support FP16 or FP32!\n";
@@ -280,7 +280,7 @@ bool CudaTensor::Add(const CudaTensor& op) {
 	}
 	if (!gpu_data) {
 		(*this) = op;
-		return SameShape(op);
+		return Like(op);
 	}
 	if (op.data_type != data_type || op.data_format != data_format) {
 		cerr << " Error: Inconsistent data types in tensor add !\n";
@@ -290,7 +290,7 @@ bool CudaTensor::Add(const CudaTensor& op) {
 		cerr << " Error: Unsportted data format in tensor add !\n";
 		return false;
 	}
-	if (n != op.n && op.n != 1) {
+	if (dims.n != op.dims.n && op.dims.n != 1) {
 		cerr << " Error: Inconsistent batches in tensor add !\n";
 		return false;
 	}
@@ -299,10 +299,10 @@ bool CudaTensor::Add(const CudaTensor& op) {
 		int b = GPUBlockSize(); 
 		tensor_add_kernel <<<g, b>>> (gpu_data, op.gpu_data, elements, data_type);
 	}
-	else if (c == op.c && (op.h == 1 && op.w == 1)) {
+	else if (dims.c == op.dims.c && (op.dims.h == 1 && op.dims.w == 1)) {
 		int g = GPUGridSize();
 		int b = GPUBlockSize();
-		tensor_add_kernel_ex <<<g,b >>> (gpu_data, op.gpu_data, n, c, h, w, op.n, data_type, data_format);
+		tensor_add_kernel_ex <<<g,b >>> (gpu_data, op.gpu_data, dims.n, dims.c, dims.h, dims.w, op.dims.n, data_type, data_format);
 	}
 	else {
 		cerr << "Not compatible!\n";
@@ -442,14 +442,14 @@ bool CudaTensor::MulAdd(const CudaTensor& op_m, const CudaTensor& op_a) {
 		cerr << " Error: Unsportted data format in tensor add !\n";
 		return false;
 	}
-	if (op_m.n != 1 || op_m.c != c || op_m.w != 1 || op_m.h != 1 ||
-		op_a.n != 1 || op_a.c != c || op_a.w != 1 || op_a.h != 1) {
-		cerr << " Error: Dims of operators must be [1x"<<c<<"x1x1]!\n";
+	if (op_m.dims.n != 1 || op_m.dims.c != dims.c || op_m.dims.w != 1 || op_m.dims.h != 1 ||
+		op_a.dims.n != 1 || op_a.dims.c != dims.c || op_a.dims.w != 1 || op_a.dims.h != 1) {
+		cerr << " Error: Dims of operators must be [1x"<< dims.c<<"x1x1]!\n";
 		return false;
 	}
 	int g = GPUGridSize();
 	int b = GPUBlockSize();
-	tensor_muladd_kernel_ex <<<g, b >>> (gpu_data, op_m.gpu_data, op_a.gpu_data, n, c, h, w,  data_type, data_format);
+	tensor_muladd_kernel_ex <<<g, b >>> (gpu_data, op_m.gpu_data, op_a.gpu_data, dims.n, dims.c, dims.h, dims.w,  data_type, data_format);
  
 	cudaError_t err = cudaDeviceSynchronize();
 	if (cudaSuccess != err) {
@@ -458,7 +458,7 @@ bool CudaTensor::MulAdd(const CudaTensor& op_m, const CudaTensor& op_a) {
 	}
 	return true;
 }
-
+__device__ const float ZERO_THRESHOLD = 1.0e-10f;
 __global__ static void adam_update_kernel(void* params, void* g, void* m, void* v, int elements, 
 	cudnnDataType_t data_type, int t, AdamConfig adam_config, float decay) {
 	int i = blockDim.x  * blockIdx.x + threadIdx.x;
@@ -475,7 +475,10 @@ __global__ static void adam_update_kernel(void* params, void* g, void* m, void* 
 			vt[i] = adam_config.beta2 * vt[i] + (1.0f - adam_config.beta2) * gt[i] * gt[i];
 			m_hat = mt[i] / (1.0f - powf(adam_config.beta1, t));
 			v_hat = vt[i] / (1.0f - powf(adam_config.beta2, t));
-			theta[i] = theta[i] + adam_config.alpha * m_hat / (sqrtf(v_hat) + adam_config.epsilon);
+			float val = theta[i] + adam_config.alpha * m_hat / (sqrtf(v_hat) + adam_config.epsilon);
+			if (val > -ZERO_THRESHOLD && val < ZERO_THRESHOLD)
+				val = 0.0f;
+			theta[i] = val;
 			gt[i] = 0.0f;
 			i += threads;
 
@@ -505,6 +508,7 @@ __global__ static void adam_update_kernel(void* params, void* g, void* m, void* 
 			vt[i] = __float2half(vt_i); 
 
 			theta_i = theta_i - adam_config.alpha * m_hat / (sqrtf(v_hat) + adam_config.epsilon);
+			if (theta_i > -ZERO_THRESHOLD && theta_i < ZERO_THRESHOLD) theta_i = 0.0f;
 			theta[i] = __float2half(theta_i);
 			gt[i] = __float2half(0.0f);
 			i += threads;
@@ -539,21 +543,25 @@ __global__ static void sgd_update_kernel(void* params, void* updates, int elemen
 		if (data_type == CUDNN_DATA_FLOAT) {
 			float* dst = reinterpret_cast<float*>(params);
 			float* src = reinterpret_cast<float*>(updates);
-			if (decay != 0.0f) src[index] -= (dst[index] * decay);
-			dst[index] += (lr * src[index]);
+			float val = dst[index];
+			if (decay != 0.0f) src[index] -= (val * decay);
+			val += (lr * src[index]);
+			if(val > -ZERO_THRESHOLD && val < ZERO_THRESHOLD)
+				val = 0.0f;
 			src[index] *= momentum;
 		}
 		else {
 			__half* dst = reinterpret_cast<__half*>(params);
-			__half* src = reinterpret_cast<__half*>(updates);
-			__half temp;
-			if (decay != 0.0f) {
-				__hmul(dst[index], __float2half(decay));
-				src[index] = __hsub(src[index], temp);
-			}
-			temp = __hmul(src[index], __float2half(lr));
-			dst[index] = __hsub(dst[index], temp);
-			src[index] = __hmul(src[index], __float2half(momentum));
+			__half* src = reinterpret_cast<__half*>(updates); 
+			float val = __half2float(dst[index]);
+			float s = __half2float(src[index]);
+			if (decay != 0.0f) s -= (val * decay);
+			if (val > -ZERO_THRESHOLD && val < ZERO_THRESHOLD)
+				val = 0.0f;
+
+			s *= momentum;
+			dst[index] = __float2half(val);
+			src[index] = __float2half(s);
 		}
 		index += threads;
 	}

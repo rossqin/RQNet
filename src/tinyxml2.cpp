@@ -1958,10 +1958,7 @@ XMLAttribute* XMLElement::CreateAttribute()
     return attrib;
 }
 
-//
-//	<ele></ele>
-//	<ele>foo<b>bar</b></ele>
-//
+
 char* XMLElement::ParseDeep( char* p, StrPair* parentEndTag, int* curLineNumPtr )
 {
     // Read the element name.

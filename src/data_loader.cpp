@@ -359,7 +359,7 @@ bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int chan
 		if (records) {
 			records->push_back(filename);
 		}
-		ImageLoadThreadParams* p = new ImageLoadThreadParams();
+		ImageLoadThreadParams* p = New ImageLoadThreadParams();
 		*p = { filename, nullptr, channels , false };
 		params.push_back(p);
 #ifdef _USE_MULTI_THREAD_ 
@@ -421,29 +421,6 @@ bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int chan
 			cerr << "Error: Reading `" << label_path << "` failed! \n";
 			succ = false;
 			continue;
-		}
-		//t1 = GetTickCount();
-		//cout << " --- LoadImageLabel in " << (t1 - t2) << "ms. ---\n";
-		if (GetAppConfig().SaveInput()) {
-			char fname[MAX_PATH];
-			char ext[MAX_PATH];
-			const char* t = get_time_str();
-			_splitpath(params[i]->filename, nullptr, nullptr, fname, ext);
-
-			string str = GetAppConfig().SaveInputDir() + fname + '_' + t + ext;
-			image->Save(str.c_str());
-			replace_extension(str, ".txt");
-			ofstream file(str);
-			if (file.is_open()) {
-				LPObjectInfos truths = info.truths;
-				for (int i = 0; i < (int)truths->size(); i++) {
-					ObjectInfo& truth = truths->at(i);
-					file << (int)truth.class_id << " " << setprecision(6) <<
-						truth.x << " " << truth.y << " " << truth.w << " " << truth.h << endl;
-				}
-				file.close();
-			}
-
 		}
 		delete image;
 		delete params[i];

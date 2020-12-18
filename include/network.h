@@ -23,27 +23,46 @@ struct DetectionResult {
 	float confidence;
 	int layer_index;
 };
+struct TrainingResult { 
+	float old_loss;
+	float obj_loss;
+	float cls_loss;
+	float box_loss;
+
+	int gt_count;		// 总共处理了多少个ground truths
+	int bg_count;
+	int gt_recall;		// 训练过程中对应的anchor的objectness > 0.5
+
+	float iou;			// 对于ground_truths, 全部的iou是多少 
+
+	float ciou;
+
+	float object_conf;	// 和ground_truth 相关的总confidence
+	float bg_conf;		// backgound confidence 
+	float cls_conf;		// class confidence 
+
+	int recalls;
+	int recalls_75;
+};
 class InferenceModule;
 typedef vector<ObjectInfo> * LPObjectInfos;
+enum NMSType { DEFAULT_NMS = 0, GREEDY_NMS, DIOU_NMS, CORNERS_NMS };
+ 
 class CNNNetwork {
-protected:
+protected: 
 	int mini_batch;
 	int input_channels;
 	int input_width;
 	int input_height;
 	float* input;
 	LPObjectInfos *truths;
-	float loss; 
-	int tp50;
-	int tp75;
-	int fp50;
-	int fp75;
-	int output_layers;
+	NMSType nms_type; 
 	int detection_layers;
 	vector<string> classes;
 	vector< pair<float, float> > anchors;
 	
 	vector<DetectionResult> detections;
+	vector<TrainingResult> training_results;
 	ModulePool module_pool;
 	string def_actvation;
 	cudnnTensorFormat_t data_format;
@@ -56,10 +75,8 @@ protected:
 
 public:
 	int cur_iteration; 
-	vector<Layer *> layers;
-	//size_t workspace_size;
-	//void* workspace; 
-	vector<string> current_training_files;
+	vector<Layer *> layers; 
+	vector<string> current_training_files; // for debugging 
 	string name;
 	ParamPool weights_pool;
 	ParamPool adam_weights_pool;
@@ -69,18 +86,11 @@ public:
 	inline int GetInputHeight() const { return input_height; }
 	inline int GetInputWidth() const { return input_width; }
 	inline int MiniBatch() const { return mini_batch; }
-	inline void RegisterTrainingResults(  float l, int t50, int f50, int t75, int f75) {
-		output_layers ++;
-		loss += l; 
-		tp50 += t50;
-		fp50 += f50;
-		tp75 += t75;
-		fp75 += f75; 
-	}
-	inline float GetLoss() const { return loss; } 
+	inline void AddTrainingResult( const TrainingResult& tr) {
+		training_results.push_back(tr);
 
-	//inline RotateType GetRotateInfo(int b) const { return (current_training_rotates && b >= 0 && b < mini_batch) ? current_training_rotates[b] : NotRotate; }
-
+	} 
+	
 	inline const char* Precision() const { return (data_type == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	
 	inline int GetAnchorCount() const { return (int)anchors.size(); } 
@@ -105,7 +115,7 @@ public:
 	bool Detect(const char* path);
 	bool Eval();
 	bool Eval_old();
-	
-	bool OutputIRModel(const string& dir, const string& name, int& l_index ) const;
+
+	bool CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16 = true);
 	void GetAnchorsStr(string& str) const ;
 };

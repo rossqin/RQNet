@@ -20,12 +20,11 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	adam_m(net->DataType(), net->DataFormat()),
 	adam_v(net->DataType(), net->DataFormat()),
 	adam_bias_m(net->DataType(), net->DataFormat()),
-	adam_bias_v(net->DataType(), net->DataFormat())
-	{
+	adam_bias_v(net->DataType(), net->DataFormat()) {
 	workspace_size = 0; 
 	conv_desc = nullptr; 
 	w_desc = nullptr;
-	output_channels = element->IntAttribute("filters", 1);
+	output_channels = element->IntAttribute("filters", input_channels);
 	int width = 1, height = 1;
 	int sz = element->IntAttribute("size", 0);
 
@@ -39,20 +38,22 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	
  
 	bool hasBias = element->BoolAttribute("bias", false); 
-	GetPrevModules(element);
+	ParsePrevModules(element);
 
-	if (hasBias) {
-		dbias.Init(1, output_channels, 1, 1);
-		bias.Init(1, output_channels, 1, 1);
-		bias.Randomize();		 
+	if (hasBias) {		
+		bias.Init({ 1, output_channels, 1, 1 });
+		bias.Randomize();
+		dbias.Init(bias.Dims());
 		network->weights_pool.Put(name + ".bias", &bias);
 	}
-	groups = element->IntAttribute("group", 1);
- 
+	if (_strcmpi("dwconv", element->Attribute("type")) == 0) {
+		groups = output_channels;
+	}
+	else 
+		groups = element->IntAttribute("groups", 1);
 	 
-		// TODO: 看一下这个groups应该放在哪里
-	w.Init(output_channels, input_channels / groups, width, height);
-	dw.Init(output_channels, input_channels / groups, width, height);
+	w.Init({ output_channels, input_channels / groups, width, height });
+	dw.Init(w.Dims());
 	 
 	w.Randomize(); // in case we can't load weights
 	
@@ -130,13 +131,13 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	bwdf_algo = CUDNN_CONVOLUTION_BWD_FILTER_ALGO_0;
 	forward_input = nullptr;
 	if (GetAppConfig().UpdatePolicy()== Adam) {
-		adam_m.Init(output_channels, input_channels, width, height);
-		adam_v.Init(output_channels, input_channels, width, height);
+		adam_m.Init(w.Dims());
+		adam_v.Init(w.Dims());
 		network->adam_weights_pool.Put(name + ".m", &adam_m);
 		network->adam_weights_pool.Put(name + ".v", &adam_v);
 		if (hasBias) {
-			adam_bias_m.Init(1, output_channels, 1, 1);
-			adam_bias_v.Init(1, output_channels, 1, 1);
+			adam_bias_m.Init(bias.Dims());
+			adam_bias_v.Init(bias.Dims());
 			network->adam_weights_pool.Put(name + ".bias.m", &adam_bias_m);
 			network->adam_weights_pool.Put(name + ".bias.v", &adam_bias_v);
 		}
@@ -144,21 +145,16 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 
 	}
 	Resize(input_width, input_height); 
+	ir_type = "Convolution";
 }
 
 bool ConvolutionalModule::Forward(ForwardContext & context) { 
 	if (!InferenceModule::Forward(context)) {
 		return false;
-	}
-	
-	
-	float one = 1.0f, zero = 0.0f;
-
-	if (context.input)
-		forward_input = context.input;
-	else
-		forward_input = &input;
-	CudaPtr<char> workspace(workspace_size);
+	} 
+	float one = 1.0f, zero = 0.0f; 
+	forward_input = context.input; 
+	CudaPtr<char> workspace((int)workspace_size);
 	cudnnStatus_t status = cudnnConvolutionForward( GetCUDNNHandle(), &one,
 		forward_input->Descriptor(), forward_input->Data(), w_desc, w, conv_desc, fwd_algo,
 		workspace.ptr, workspace_size, &zero, output.Descriptor(), output);
@@ -170,7 +166,6 @@ bool ConvolutionalModule::Forward(ForwardContext & context) {
 	if (bias.Channel() == output_channels) {
 		ret = output.Add(bias);
 	}
-	//input.Cache(cached_input);
 	return ret;
 }
 bool ConvolutionalModule::Backward(CudaTensor& delta) {
@@ -186,7 +181,7 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 			return false;
 		}
 	} 
-	CudaPtr<char> workspace(workspace_size);
+	CudaPtr<char> workspace((int)workspace_size);
 	status = cudnnConvolutionBackwardFilter(handle, &one, forward_input->Descriptor(), forward_input->Data(),
 		delta.Descriptor(), delta, conv_desc, bwdf_algo, workspace.ptr,
 		workspace_size, &one, w_desc, dw);
@@ -195,7 +190,7 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 		return false;
 	}
 	CudaTensor temp = delta;
-	if (!delta.Init(network->MiniBatch(), input_channels, input_height, input_width)) return false;
+	if (!delta.Init({ network->MiniBatch(), input_channels, input_height, input_width })) return false;
 	status = cudnnConvolutionBackwardData(handle, &one, w_desc, w,
 		temp.Descriptor(), temp, conv_desc, bwdd_algo, workspace,
 		workspace_size, &zero, delta.Descriptor(), delta); 
@@ -203,7 +198,7 @@ bool ConvolutionalModule::Backward(CudaTensor& delta) {
 		cerr << "Error: backward data failed in`" << name << "`. Error code :" << (int)status << endl;
 		return false;
 	}
-	// if(input.Elements() > 0) input.Release();
+
 	return DistributeDeltas(delta);
 }
 extern bool sgd_update(void* params, void* updates, int elements, cudnnDataType_t data_type, float lr, bool decay);
@@ -300,80 +295,95 @@ bool ConvolutionalModule::Resize(int w, int h) {
 	input_height = h;
 	return true;
 }
+const float MAX_FP16 = 65000.0f;
+bool ConvolutionalModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector<OpenVINOIRv7Edge>& edges, 
+	ofstream& bin, size_t& bin_offset, bool fp16) {
 
-/*
-Description: group denotes the number of groups to which output and input should be split. 
-For example, 
-group equal 1 means that all the filters are applied to full input (usual convolution), 
-group equals 2 means that both input and output channels are separated into 2 groups 
-and i-th output group is connected to i-th input group channels. 
-group equals number of output feature maps denotes depth-wise separable convolution
-*/
-bool ConvolutionalModule::OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int &l_index) const {
-	
-
-	if (!InferenceModule::OutputIRModel(xml, bin, edges, bin_offset,l_index)) return false;
-	xml << "    <layer id=\"" << index << "\" name=\"" << name << "\" precision=\"" << Precision() << "\" type=\"Convolution\">" << endl;
-	xml << "      <data auto_pad=\"same_upper\" dilations=\"" << dilation_h << "," << dilation_w
-		<< "\" group=\"1\" kernel=\"" << w.Height() << "," << w.Width() << "\" output=\"" << output_channels
-		<< "\" pads_begin=\"" << padding_h << "," << padding_w << "\" pads_end=\"" << padding_h << "," << padding_w
-		<< "\" strides=\"" << stride_h << "," << stride_w << "\"/>" << endl;
-	WritePorts(xml);
-	xml << "      <blobs>" << endl;
- 
-	
-	CpuPtr<char> w_cpu(w.Bytes(), w.Data());
-	CpuPtr<char> bias_cpu(bias.Bytes(), bias.Data()); 
+	CpuPtr<float> w_cpu(w.Elements() , w.Data());
+	CpuPtr<float> bias_cpu(bias.Elements(), bias.Data());
+#if 0
 	if (prevs.size() == 0) {
-		// the first module, we need to divide 255
-		if (w.DataType() == CUDNN_DATA_FLOAT) {
-			float* pf = reinterpret_cast<float*>(w_cpu.ptr);
-			for (int i = 0; i < w.Elements(); i++) {
-				pf[i] = pf[i] / 255.0f;
-			}
-		}
-		else {
-			__half* ph = reinterpret_cast<__half*>(w_cpu.ptr);
-			float t;
-			for (int i = 0; i < w.Elements(); i++) { 
-				t = __half2float(ph[i]) / 255.0f;				
-				ph[i] = __float2half(t) ;
-			}
+		for (int i = w_cpu.Length() - 1; i >= 0; i--) {
+			w_cpu.ptr[i] /= 255.0f;
+		} 
+	}
+#endif
+	ir_params.clear(); 
 
+	char buffer[32]; 
+	// this leads to wrong result when strides=2
+	//ir_params["data.auto_pad"] = "same_upper"; 
+
+	sprintf_s(buffer, 32, "%u,%u", dilation_h, dilation_w);
+	ir_params["data.dilations"] = buffer;
+
+	sprintf_s(buffer, 32, "%u", groups);
+	ir_params["data.group"] = buffer;
+
+	sprintf_s(buffer, 32, "%u,%u", w.Height(), w.Width());
+	ir_params["data.kernel"] = buffer;
+
+	sprintf_s(buffer, 32, "%u", output_channels);
+	ir_params["data.output"] = buffer;
+
+	sprintf_s(buffer, 32, "%u,%u", padding_h, padding_w);
+	ir_params["data.pads_begin"] = buffer;
+	ir_params["data.pads_end"] = buffer;
+
+	sprintf_s(buffer, 32, "%u,%u", stride_h, stride_w);
+	ir_params["data.strides"] = buffer;  
+	if (fp16) { 
+		CpuPtr<__half> data(w_cpu.Length() + bias_cpu.Length());
+
+		int i = 0;
+		while (i < w_cpu.Length()) {
+			//
+			float f = w_cpu.ptr[i];
+			// range of fp16: -65504~ -6.10 * 10e-5, 6.10 * 10e-5 ~ -65504
+			if (f > MAX_FP16) f = MAX_FP16;
+			else if(f < -MAX_FP16) f = -MAX_FP16; 
+			data.ptr[i] = __float2half(f);
+			i++;
+		}
+		for (int j = 0; j < bias_cpu.Length(); j++, i++) {
+			float f = bias_cpu.ptr[j];
+			if (f > MAX_FP16) f = MAX_FP16;
+			else if (f < -MAX_FP16) f = -MAX_FP16;
+			data.ptr[i] = __float2half(f);
+		}
+		bin.write(reinterpret_cast<char*>(data.ptr), data.Length() * 2);
+
+		sprintf_s(buffer, 32, "%lu", (unsigned long)bin_offset);
+		ir_params["weights.offset"] = buffer;
+		sprintf_s(buffer, 32, "%lu", (unsigned long)(w_cpu.Length() * 2));
+		ir_params["weights.size"] = buffer;
+		bin_offset += (w_cpu.Length() * 2); 
+		if (bias.Bytes() > 0) {
+			sprintf_s(buffer, 32, "%lu", (unsigned long)bin_offset);
+			ir_params["zbiases.offset"] = buffer;
+			sprintf_s(buffer, 32, "%lu", (unsigned long)(bias_cpu.Length() * 2));
+			ir_params["zbiases.size"] = buffer; 
+			bin_offset += (bias_cpu.Length() * 2);
 		}
 	}
-	
-// 	float *display = reinterpret_cast<float*>(w_cpu.ptr);
-// 	__half temp;
-// 	char line[100];
-// 	unsigned int ui;
-// 	unsigned short us;
-// 	for (int i = 0; i < w.Elements(); i++) {
-// 		temp = __float2half(display[i]);
-// 		ui = *(reinterpret_cast<unsigned int *>(display + i));
-// 		us = *(reinterpret_cast<unsigned short *>(&temp));
-// 		sprintf(line, "%03d : 0x%08x(%.6f) - 0x%04x\n", i, ui, display[i], us);
-// 		
-// 		cout << line;
-// 		
-// 	}
-	
-	/*
-	Weights layout is GOIYX (GOIZYX for 3D convolution),
-	which means that X is changing the fastest, then Y, then Input, Output, then Group.
-	*/
-	bin.write(w_cpu.ptr, w.Bytes());
-	xml << "        <weights offset=\"" << bin_offset << "\"  size=\"" << w.Bytes() << "\" />" << endl;
-	bin_offset += w.Bytes();
+	else { // FP32
+		bin.write(reinterpret_cast<char*>(w_cpu.ptr), w.Bytes());
 
-	bin.write(bias_cpu.ptr, bias.Bytes());
-	xml << "        <biases offset=\"" << bin_offset << "\"  size=\"" << bias.Bytes() << "\" />" << endl;
-	bin_offset += bias.Bytes();
-
-	xml << "      </blobs>" << endl;
-	xml << "    </layer>" << endl;
-	 
-	return true;
+		sprintf_s(buffer, 32, "%lu", (unsigned long)bin_offset);
+		ir_params["weights.offset"] = buffer;
+		sprintf_s(buffer, 32, "%lu", (unsigned long)w.Bytes());
+		ir_params["weights.size"] = buffer;
+		bin_offset += w.Bytes();
+		if (bias.Bytes() > 0) {
+			bin.write(reinterpret_cast<char*>(bias_cpu.ptr), bias.Bytes());
+			sprintf_s(buffer, 32, "%lu", (unsigned long)bin_offset);
+			ir_params["zbiases.offset"] = buffer;
+			sprintf_s(buffer, 32, "%lu", (unsigned long)bias.Bytes());
+			ir_params["zbiases.size"] = buffer;
+			bin_offset += bias.Bytes();
+		}
+	}
+	return InferenceModule::RenderOpenVINOIR(layers,edges,bin,bin_offset, fp16);
 }
 uint32_t ConvolutionalModule::GetFlops() const {
 	return 0;

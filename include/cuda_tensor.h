@@ -71,11 +71,16 @@ public:
 	}
 	~CudaPtr() { if (ptr) cudaFree(ptr); }
 };
- 
+struct TensorDims {
+	int n, c, h, w;
+};
+inline bool operator==(const TensorDims& d1, const TensorDims& d2) { return d1.n == d2.n && d1.c == d2.c && d1.h == d2.h && d1.w == d2.w;}
+inline bool operator!=(const TensorDims& d1, const TensorDims& d2) { return d1.h != d2.h || d1.w != d2.w || d1.c != d2.c || d1.n != d2.n ; }
+
 class CudaTensor {
 protected:
 	void* gpu_data;
-	int n,c,h,w;
+	TensorDims dims;
 	cudnnTensorDescriptor_t desc;
 	cudnnTensorFormat_t data_format;
 	cudnnDataType_t data_type;
@@ -88,26 +93,27 @@ public:
 	CudaTensor(const CudaTensor& right);
 	CudaTensor(cudnnDataType_t t , cudnnTensorFormat_t f );
 	~CudaTensor();
-	inline int Batch() const { return n; }
-	inline int Channel() const { return c; }
-	inline int Height() const { return h; }
-	inline int Width() const { return w; }
+	inline int Batch() const { return dims.n; }
+	inline int Channel() const { return dims.c; }
+	inline int Height() const { return dims.h; }
+	inline int Width() const { return dims.w; }
 	inline int Elements() const { return elements; }
 	inline void* Data() const { return gpu_data; }
+	inline TensorDims Dims() const { return dims; }
 	inline void DataType(cudnnDataType_t t) { data_type = t; byte_per_element = (t == CUDNN_DATA_FLOAT) ? sizeof(float) : sizeof(__half); }
 	inline int Bytes() const { return bytes; }
-	inline int Elements2D() const { return (data_format == CUDNN_TENSOR_NCHW) ? h * w : c * w; }
-	inline int Elements3D() const { return h * w * c; }
+	inline int Elements2D() const { return (data_format == CUDNN_TENSOR_NCHW) ? dims.h * dims.w : dims.c * dims.w; }
+	inline int Elements3D() const { return dims.h * dims.w * dims.c; }
 	inline operator void*() const { return gpu_data; }
 	inline int ElementBytes() const { return byte_per_element; }
 	inline cudnnDataType_t DataType() const { return data_type; }
 	inline cudnnTensorFormat_t DataFormat() const { return data_format; }
-	inline bool SameShape(const CudaTensor& r) const { return (n == r.n) && (c == r.c) && (h == r.h) && (w == r.w); }
-	inline bool DifferentShape(const CudaTensor& r) const { return (n != r.n) || (c != r.c) || (h != r.h) || (w != r.w); }
+	inline bool Like(const CudaTensor& r) const { return dims == r.dims; }
+	inline bool DifferentShape(const CudaTensor& r) const { return dims != r.dims; }
 	char* BatchData(int b) const;
 	inline cudnnTensorDescriptor_t Descriptor() const { return desc; }
 
-	bool Init(int n_, int c_, int h_, int w_);
+	bool Init(const TensorDims& d);
 	const CudaTensor& operator=(const CudaTensor& right);
 	const CudaTensor& operator=(float val);
 

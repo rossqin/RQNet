@@ -1,6 +1,14 @@
 #include "stdafx.h"
 #include "activation.h"
 #include <cuda_fp16.h>
+#define MISH_THRESHOLD  20 
+
+__device__ static inline float softplus(float x, float threshold) {
+	if (x > threshold) return x;                // too large
+	else if (x < -threshold) return expf(x);    // too small
+	return logf(expf(x) + 1);
+}
+__device__ static inline float tanh_activate(float x) { return (2 / (1 + expf(-2 * x)) - 1); }
 
 __global__ static void activate_float_kernel(const float* in, float* out, int elements,
 	cudnnDataType_t data_type, ActivationMode mode) { 
@@ -30,6 +38,12 @@ __global__ static void activate_float_kernel(const float* in, float* out, int el
 			//if (index < 13)
 			//	printf("in: %f, out : %f\n", val, out[index]);
 			break;
+
+		case MISH:
+		{
+			out[index] = val * tanh_activate(softplus(val, MISH_THRESHOLD));
+			break;
+		}
 		case RELU:
 			if (val < 0.0f)
 				out[index] = 0.0f;
@@ -115,9 +129,15 @@ __global__ static void activate_half_kernel(const __half* in, __half* out, int e
 				out[index] = 0.0;
 			}
 			else
-				out[index] = in[index];
-
+				out[index] = in[index]; 
 			break;
+		case MISH:
+		{
+			float softplus = logf(1.0f + expf(fx));
+			val = tanhf(softplus);
+			out[index] = __float2half(val);
+			break;
+		}
 		case HARDTAN:
 			 
 			if (fx < -1.0f)
@@ -177,6 +197,22 @@ __global__ static void gradient_float_kernel(const float* y, float* dy, int elem
 			val = y[index] * (1.0 - y[index]);
 			dy[index] *= val;
 			break;
+		case MISH:
+		{/*
+			float x = y[index];
+			float ex = expf(x);
+			float w = 4 * (x + 1) + (4 * ex + ex * ex + (4 * x + 6)) * ex;
+			float delta = (2 + ex) * ex + 2;
+			dy[index] *= (ex * w / (delta * delta));*/
+			float inp = y[index];
+			const float sp = softplus(inp, MISH_THRESHOLD);
+			const float grad_sp = 1 - exp(-sp);
+			const float tsp = tanhf(sp);
+			const float grad_tsp = (1 - tsp * tsp) * grad_sp;
+			const float grad = inp * grad_tsp + tsp;
+			dy[index] *= grad;
+			break;
+		}			
 		case RELU6:
 			if (y[index] <= 0.0 || y[index] > 6.0f ) dy[index] = 0.0;
 			break;
@@ -226,6 +262,14 @@ __global__ static void gradient_half_kernel(const __half* y, __half* dy, int ele
 			val = fy * (1.0f - fy) * __half2float(dy[index]);
 			dy[index] = __float2half(val);
 			break;
+		case MISH:
+		{ 
+			float ex = expf(fy);
+			float w = 4 * (fy + 1) + (4 * ex + ex * ex + (4 * fy + 6)) * ex;
+			float delta = (2 + ex) * ex + 2;
+			dy[index] = __float2half(ex * w / (delta * delta));
+			break;
+		}
 		case RELU6:
 			if (fy <= 0.0f || fy > 6.0f) dy[index] = __float2half(0.0f);
 			break;

@@ -16,7 +16,7 @@ struct OpenVINOIRv7ParamsNode {
 	string name;
 	int indent;
 	map<string, string> params; 
-	OpenVINOIRv7ParamsNode() { indent = 3; } 
+	OpenVINOIRv7ParamsNode() { indent = 3; name = "data"; }
 	
 };
 ostream& operator<<(ostream& os, const OpenVINOIRv7ParamsNode& node);
@@ -28,7 +28,7 @@ struct OpenVINOIRv7Layer {
 	string ltype;
 	const InferenceModule* using_module;
 	 
-	vector<OpenVINOIRv7ParamsNode> params;
+	vector<OpenVINOIRv7ParamsNode> param_nodes;
 	vector<OpenVINOIRv7Port> inputs;
 	vector<OpenVINOIRv7Port> outputs;
 	OpenVINOIRv7Layer(int _id, const string& _name, const char* t, const char* _prec = "FP16");

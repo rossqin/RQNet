@@ -43,70 +43,29 @@ bool ParamPool::Load(const char * filename) {
 		}
 		//TODO: check datatype
 		total_read += read_length;
-#if 0		
-		  bool discarded = false;
-		if (name.substr(0, 7) == "layer01") {
-			name.replace(0, 7, "stage-0101");
-		}
-		else if (name.substr(0, 7) == "layer03") {
-			name.replace(0, 7, "stage-0201");
-		}
-		else if (name.substr(0, 7) == "layer05") {
-			name.replace(0, 7, "stage-0401");
-		}
-		else if (name.substr(0, 7) == "layer07") {
-			name.replace(0, 7, "stage-0801");
-		}
-		else if (name.substr(0, 7) == "layer09") {
-			name.replace(0, 7, "stage-1601");
-		}
-		else if (name.substr(0, 7) == "layer11") {
-			name.replace(0, 7, "stage-3201");
-		}
-		else if (name.substr(0, 7) == "layer14") {
-			name.replace(0, 7, "stage-3202");
-		}
-		else if (name.substr(0, 7) == "layer16") {
-			name.replace(0, 7, "beforedet32");
-		}
-		else if (name.substr(0, 7) == "layer18") {
-			name.replace(0, 7, "stage-32br");
-		}
-		else if (name.substr(0, 7) == "layer20") {
-			name.replace(0, 7, "stage-16merge");
-		}
-		else if (name.substr(0, 7) == "layer21") {
-			name.replace(0, 7, "beforedet16");
-		}
-		else
-			discarded = true ;
-#endif
-		char* buf = New char[data_header.bytes];
-		f.read(buf, data_header.bytes);
+ 
+		CpuPtr<char> buf(data_header.bytes);
+		f.read(buf.ptr, data_header.bytes);
 		read_length = f.gcount();
 		total_read += read_length;
-#if 0
-		if (discarded) {
-			delete[]buf;
-			continue;
-		}
-#endif
 		auto it = params.find(name);
-		if (it != params.end()) {
-			it->second->Push(buf, data_header); 
+		if (it != params.end()) { 
+			if (CUDNN_DATA_FLOAT == data_header.data_type) {
+				float* f = reinterpret_cast<float*>(buf.ptr);
+				int num = data_header.bytes >> 2;
+				for (int i = 0; i < num; i++) {
+					//if (first_conv) f[i] /= 1024.0f;
+					if (f[i] > -1.0e-10f && f[i] < 1.0e-10f)
+						f[i] = 0.0f;
+				}
+			}
+			if (!it->second->Push(buf, data_header)) {
+				cerr << " INFO: Parameter `" << name << "` loaded but not set. Ignore.\n";
+			}
 		}
-		else { 
-			CudaTensor* tensor = new CudaTensor(data_header.data_type, header.tensor_order);
-			if (header.tensor_order == CUDNN_TENSOR_NCHW)
-				tensor->Init(data_header.dims[0], data_header.dims[1], data_header.dims[2], data_header.dims[3]);
-			else
-				tensor->Init(data_header.dims[0], data_header.dims[3], data_header.dims[1], data_header.dims[2]);
-			//CUDNN_TENSOR_NHWC
-			tensor->Push(buf, data_header);
-			params.insert(pair<string, CudaTensor*>(name, tensor));
-			cout << " Hint: Loading parameter `" << name << "` failed. Added.\n";
-		}
-		delete[]buf;
+		else {			 
+			cerr << " INFO: Parameter `" << name << "` not in network. Ignore.\n";
+		} 
 	}  
 	delete[]str_buf;
 	f.close();
@@ -407,7 +366,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					param_name = l.output_id;
 					param_name += ".normalization";
 					tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);
-					tensor->Init(4, l.filters, 1,1);
+					tensor->Init({ 4, l.filters, 1,1 });
 					params.insert(pair<string, CudaTensor*>(param_name, tensor));
 					cpu_data = New float[tensor->Elements()];
 					weightsfile.read(reinterpret_cast<char*>(cpu_data), tensor->Bytes());
@@ -424,7 +383,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 					param_name = l.output_id;
 					param_name += ".convolution.bias";
 					CudaTensor *tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);
-					tensor->Init(1, l.filters, 1, 1);
+					tensor->Init({ 1, l.filters, 1, 1 });
 					params.insert(pair<string, CudaTensor*>(param_name, tensor));
 					cpu_data = New float[tensor->Elements()];
 					weightsfile.read(reinterpret_cast<char*>(cpu_data), tensor->Bytes());
@@ -435,7 +394,7 @@ bool ParamPool::TransformDarknetWeights(const char* cfg, const char* filename, c
 				param_name = l.output_id;
 				param_name += ".convolution.weights";
 				tensor = New CudaTensor(CUDNN_DATA_FLOAT, CUDNN_TENSOR_NCHW);				
-				tensor->Init(l.filters, l.channels, l.size, l.size);
+				tensor->Init({ l.filters, l.channels, l.size, l.size });
 				if (param_name == "layer20.weights") {
 					cout << " dim [" << tensor->Batch() << ", " << tensor->Channel() << ", " << tensor->Height()
 						<< ", " << tensor->Width() << "]\n";
@@ -600,4 +559,7 @@ bool ParamPool::DumpAsExcels(const char* output_dir) const {
 		
 	}
 	return true;
+}
+void ParamPool::Reset() {
+	params.clear();
 }

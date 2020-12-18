@@ -7,7 +7,10 @@ ostream& operator<<(ostream& os, const OpenVINOIRv7ParamsNode& node) {
 		s.assign(node.indent, '\t');
 		os << s;
 	}
-	os << "<" << node.name;
+	if (node.name == "zbiases")
+		os << "<biases";
+	else 
+		os << "<" << node.name;
 	for (auto& p : node.params) {
 		os << " " << p.first << "=\"" << p.second << "\"";
 	} 
@@ -36,6 +39,9 @@ ostream& operator<<(ostream& os, const OpenVINOIRv7Port& port) {
 ostream& operator<<(ostream& os, const OpenVINOIRv7Layer& layer) {
 	os << "\t\t<layer id=\"" << layer.id << "\" name=\"" << layer.name << "\" precision=\""
 		<< layer.precision << "\" type=\"" << layer.ltype << "\" >\n";
+	for (auto& p : layer.param_nodes) {
+		os << p;
+	}
 	if (layer.inputs.size() > 0) {
 		os << "\t\t\t<input>\n";
 		for (auto& p : layer.inputs) {
@@ -48,14 +54,12 @@ ostream& operator<<(ostream& os, const OpenVINOIRv7Layer& layer) {
 		os << p;
 	}
 	os << "\t\t\t</output>\n";
-	for (auto& p : layer.params) {
-		os << p;
-	}
+	
 	os << "\t\t</layer>\n";
 	return os;
 }
 ostream& operator<<(ostream& os, const OpenVINOIRv7Edge& edge) {
-	os << "\t\t<edge  from-layer=\""<< edge.from_layer << "\" from-port=\""<< edge.from_port 
+	os << "\t\t<edge from-layer=\""<< edge.from_layer << "\" from-port=\""<< edge.from_port 
 		<<"\" to-layer=\"" << edge.to_layer << "\" to-port=\"" << edge.to_port <<  "\"/>\n";
 	return os;
 }

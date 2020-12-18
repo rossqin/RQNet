@@ -10,7 +10,7 @@ bool SSDModule::Resize(int w, int h) {
 }
 SSDModule::SSDModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev) :
 	InferenceModule(element, l, net, prev) {
-	GetPrevModules(element);
+	ParsePrevModules(element);
 	focal_loss = element->BoolAttribute("focal-loss", true);
 	int k = element->IntAttribute("k", true); 
 	// by default 2.0 / sk = (w + h );

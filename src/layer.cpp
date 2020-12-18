@@ -3,34 +3,31 @@
 #include "network.h"
 #include "inference_module.h"
 
-Layer::Layer(const XMLElement* element,int i, CNNNetwork* net, InferenceModule*& prev_module) {
-	index = i; 
+Layer::Layer(const XMLElement* element, CNNNetwork* net, InferenceModule*& prev_module) {
+	index = net->layers.size(); 
 	const char* s = element->Attribute("id");
 	if (!s || !(*s)) {
 		char buf[20];
-		sprintf(buf, "layer%02d", i);
+		sprintf(buf, "layer%02d", index);
 		name = buf;
 	}
 	else
 		name = s;
 	s = element->Attribute("desc");
-	if (s && *s) desc = s;
-	last_module = nullptr;
+	if (s && *s) desc = s; 
 	network = net;
 	const XMLElement* moduleElement = element->FirstChildElement("module");
-	while (moduleElement){
-		string mtype = moduleElement->Attribute("type");
-		prev_module = InferenceModule::FromXmlElement(moduleElement,this, net,  prev_module);
+	while (moduleElement){		
+		prev_module = InferenceModule::FromXmlElement(moduleElement, this, net,  prev_module);
 		modules.push_back(prev_module);
 		moduleElement = moduleElement->NextSiblingElement();
-	}
-	last_module = prev_module;
+	} 
 } 
 bool Layer::Forward(ForwardContext & context) { 
 	for(size_t i = 0 ; i < modules.size(); i++){
 		InferenceModule* module = modules[i];
 		if (!module->Forward(context)) {
-			cerr << "Forward failed at " << modules[i]->name << endl;
+			cerr << "Forward failed at " << modules[i]->Name() << endl;
 			return false;
 		}		
 	}
@@ -69,13 +66,4 @@ bool Layer::Update(float lr) {
 
 void Layer::Print() const
 {
-}
-
-bool Layer::OutputIRModel(ofstream & xml, ofstream & bin, stringstream & edges, size_t & bin_offset, int &l_index) const{
-	for (size_t i = 0; i < modules.size(); i++) {
-		InferenceModule* module = modules[i];
-		if (!module->OutputIRModel(xml, bin, edges, bin_offset, l_index))
-			return false;
-	}
-	return true;
-}
+} 

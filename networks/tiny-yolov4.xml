@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0">
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
+		<anchor width="10" height="14" />
+		<anchor width="27" height="23" />
+		<anchor width="37" height="58" />
+		<anchor width="75" height="67" />
+		<anchor width="93" height="104" />
+		<anchor width="187" height="163" />
+	</anchors>
+	<layers>
+		<layer id="layer01" desc="output:208*208*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3" stride="2" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="layer02" desc="output:104*104*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" stride="2" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="layer03" desc="output:104*104*32"  >
+			<module id="convolution"	type="conv" filters="64" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+			<!-- why not using 1x1 conv? -->
+			<module id="split_2_1" 		type="split" axis="1" num="2" using="1"/>
+		</layer> 
+		<layer id="layer04" desc="output:104*104*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="layer05" desc="output:104*104*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="layer06" desc="output:104*104*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" before="layer04.last,layer05.last"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/> 
+		</layer>		
+		<layer id="layer07" desc="output: 52* 52*128" >
+			<module id="pool" type="max-pool" window="2" stride="2" before="layer06.last,layer03.last" />
+		</layer>
+		<layer id="layer08" desc="output: 52* 52*64"  >
+			<module id="convolution"	type="conv" filters="128" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+			<!-- why not using 1x1 conv? -->
+			<module id="split_2_1" 		type="split" axis="1" num="2" using="1"/>
+		</layer> 
+		<layer id="layer09" desc="output: 52* 52*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer> 
+		<layer id="layer10" desc="output: 52* 52*128" >
+			<module id="convolution"	type="conv" filters="128" size="3" before="layer09.last,layer08.last" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="layer11" desc="output: 26* 26*256" >
+			<module id="pool" type="max-pool" window="2" stride="2" before="layer10.last,layer08.activation" />
+		</layer>
+		<layer id="layer12" desc="output: 26* 26*128" >
+			<module id="convolution"	type="conv" filters="256" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+			<module id="split_2_1" 		type="split" axis="1" num="2" using="1"/>
+		</layer> 
+		<layer id="layer13" desc="output: 26* 26*128" >
+			<module id="convolution"	type="conv" filters="128" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/> 
+		</layer> 
+		<layer id="layer14" desc="output: 26* 26*256" >
+			<module id="convolution"	type="conv" filters="256" size="3" before="layer13.last,layer12.activation"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/> 
+		</layer> 
+		<layer id="layer15" desc="output: 13* 13*512" >
+			<module id="pool" type="max-pool" window="2" stride="2" before="layer14.last,layer12.activation" />
+		</layer>
+		<layer id="layer16" desc="output: 13* 13*256" >
+			<module id="convolution"	type="conv" filters="256" size="1" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/> 
+		</layer> 
+		<layer id="layer17" desc="output: 13* 13*512" >
+			<module id="convolution"	type="conv" filters="512" size="1" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/> 
+		</layer>
+		<layer id="detection.big" >
+			<module id="convolution"	type="conv" filters="15" size="1" />
+			<module id="yolo" type="yolo-detection" anchor-masks="3,4,5" />
+		</layer>
+		<layer id="layer19" desc="output: 26* 26*128" >
+			<module id="convolution"	type="conv" filters="128" size="1" before="layer16.last" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+			<module id="upsample" type="upsample"  stride="2" />
+		</layer>		
+		<layer id="layer20" desc="output: 26* 26*256" >
+			<module id="convolution"	type="conv" filters="256" size="3" before="layer19.last,layer13.last,layer12.activation" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" method="leaky"/>
+		</layer>
+		<layer id="detection.small" >
+			<module id="convolution"	type="conv" filters="15" size="1" />
+			<module id="yolo" type="yolo-detection" anchor-masks="0,1,2" />
+		</layer>
+	</layers>
+</net>

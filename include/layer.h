@@ -19,10 +19,12 @@ protected:
 	string desc;
 	vector<InferenceModule*> modules;
 	CNNNetwork* network;
+	friend class InferenceModule;
 public:
+	friend class CNNNetwork;
 	// for debugging
-	InferenceModule* last_module;
-	Layer(const XMLElement* element, int i, CNNNetwork* net, InferenceModule*& prev_module);
+	
+	Layer(const XMLElement* element, CNNNetwork* net, InferenceModule*& prev_module);
 	inline int GetIndex() const { return index; }
 	inline const string& GetName() const { return name; }
 	inline const string& GetDesc() const { return desc; }
@@ -41,6 +43,5 @@ public:
 	bool GetCost(float& val) const { return false; }
 	int  MemRequired() const { return 0; }
 	unsigned int GetWorkspaceSize() const { return 0; }
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const;
 	
 };

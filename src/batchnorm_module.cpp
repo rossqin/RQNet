@@ -15,13 +15,13 @@ BatchNormModule::BatchNormModule(const XMLElement * element, Layer * l, CNNNetwo
 
 	cudnnCreateTensorDescriptor(&t_desc);
 
-	GetPrevModules(element);	
+	ParsePrevModules(element);	
 
 	output_width = input_width;
 	output_height = input_height;
 	output_channels = input_channels;
 	//params order : beta, gamma, running_mu,running_var 
-	params.Init(4, output_channels, 1, 1);
+	params.Init({ 4, output_channels, 1, 1 });
 
 	CpuPtr<float> ones(output_channels);
 	for (int i = 0; i < output_channels; i++)
@@ -32,10 +32,10 @@ BatchNormModule::BatchNormModule(const XMLElement * element, Layer * l, CNNNetwo
 	network->weights_pool.Put(name, &params); 
 
 	//training_params order : betas_update, gammas_update, mu, var 
-	training_params.Init(4, output_channels, 1, 1);
+	training_params.Init({ 4, output_channels, 1, 1 });
 
 	if (GetAppConfig().UpdatePolicy() == Adam) { 
-		adam_params.Init(4, output_channels, 1, 1);
+		adam_params.Init({ 4, output_channels, 1, 1 });
 		network->adam_weights_pool.Put(name, &adam_params);
 	}
 	forward_input = nullptr;
@@ -75,13 +75,9 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 	
 	float one = 1.0f, zero = 0.0f; 
 	if (!InferenceModule::Forward(context)) return false;
-	if (context.input)
-		forward_input = context.input;
-	else
-		forward_input = &input;
-
+	forward_input = context.input;
 	if (fused) {
-		output = *forward_input;
+		output = *(context.input);
 		return true;
 	}
 
@@ -95,10 +91,7 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 	cudnnStatus_t status;
 	freezed = context.freezeBNParams;
 	cudnnHandle_t handle = GetCUDNNHandle();
-	if (context.training) {
-		if (prevs.size() > 0) {
-			prevs[0]->CacheOutput();
-		}
+	if (context.training) { 
 		status = cudnnBatchNormalizationForwardTraining(handle, CUDNN_BATCHNORM_SPATIAL,
 			&one, &zero, forward_input->Descriptor(), forward_input->Data(), 
 			output.Descriptor(), output, t_desc, gamma, beta,
@@ -112,8 +105,7 @@ bool BatchNormModule::Forward(ForwardContext & context) {
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "batch normalization failed in `" << name << "`. Error code :" << (int)status << endl;
 		return false;
-	}
-	//input.Cache(cached_input);
+	} 
 	return true;
 }
 
@@ -126,16 +118,14 @@ bool BatchNormModule::Backward(CudaTensor & delta) {
 	void* gamma_update = training_params.BatchData(1);
 	void* mu = training_params.BatchData(2);
 	void* var = training_params.BatchData(3);
-	CudaTensor temp = delta;
-	//input.Restore(cached_input);
+	CudaTensor temp = delta; 
 	cudnnStatus_t status = cudnnBatchNormalizationBackward(GetCUDNNHandle(), CUDNN_BATCHNORM_SPATIAL,
 		&one, &zero, &one, &one, forward_input->Descriptor(), forward_input->Data(), temp.Descriptor(), temp , delta.Descriptor(), delta,
 		t_desc, gamma, gamma_update, beta_update, 1e-5, mu, var);
 	if (CUDNN_STATUS_SUCCESS != status) {
 		cerr << "Error: `" << name << "` backward failed." << endl;
 		return false;
-	}
-	//if(input.Elements() > 0) input.Release();
+	} 
 	return DistributeDeltas(delta);
 }
 extern bool adam_update(void* theta, void* gt, void* mt, void* vt, int elements, int t, cudnnDataType_t data_type, float lr, bool decay);
@@ -181,10 +171,10 @@ bool fuse_batchnorm(void* filters, void* bias, void* batchnorm_params,
 bool BatchNormModule::Fuse() {
 	if (prevs.size() != 1) return false;
 	if (fused) return true;
-	ConvolutionalModule* module = dynamic_cast<ConvolutionalModule*>(prevs[0]);
+	ConvolutionalModule* module = dynamic_cast<ConvolutionalModule*>(prevs[0].module);
 	if (!module) return false;  
 	if (module->bias.Elements() != output_channels) {
-		if (!module->bias.Init(1, output_channels, 1, 1)) return false;
+		if (!module->bias.Init({ 1, output_channels, 1, 1 })) return false;
 	}
 	bool r = fuse_batchnorm(module->w, module->bias,params,output_channels,
 		module->w.Elements3D(), module->w.DataType());

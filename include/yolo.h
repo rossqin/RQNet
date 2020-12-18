@@ -1,18 +1,6 @@
 #pragma once
 #include "inference_module.h"
-#pragma pack(push)
-#pragma pack(1)
-/*
-struct YoloTargetLabel {
-	float x;
-	float y;
-	float w;
-	float h;
-	float probility;
-	float class_ids[1];
-};
-*/
-#pragma pack(pop) 
+ 
 struct AnchorBoxItem {
 	float width;
 	float height;
@@ -42,7 +30,16 @@ protected:
 		int x;
 		int y;
 		int a;
-	};
+	}; 
+	float nms_beta;
+	float cls_normalizer;
+	float iou_normalizer;
+	float obj_normalizer;
+	float bg_normalizer;
+	float ignore_thresh;
+	float truth_thresh;
+	bool objectness_smooth;
+	float max_delta;
 	bool train_bg;
 	int cells_count; 
 	vector<TruthInLayer> gts; 
@@ -51,17 +48,21 @@ protected:
 	vector<AnchorLoc> bg_anchors;
 	bool Resize(int w, int h);
 	bool Detect(); 
-	void DeltaClass(float* output, float* delta, int cls_index, int class_id); 
+	void DeltaClass(float* o, float* d, int cls_index, int class_id);
+	float DeltaBox(float* o, float* d, const TruthInLayer& gt, Box pred, float anchor_w, float anchor_h);
 	bool CalcDelta();
-	bool ResolveGTs(int batch, int& cfl_t_count);
-	void CalcBgAnchors();
+	bool ResolveGTs(int batch, int& cfl_t_count, int& gt_count);
+	void CalcBgAnchors(int& bg_count);
 	int EntryIndex(int x, int y, int a, int channel);
 	void UpdateDetectPerfs(float* output_cpu, vector<DetectionResult>& results);
 public:
-	YoloModule(const XMLElement* element, Layer* l, CNNNetwork* network, InferenceModule* prev);
-	~YoloModule();
+	inline const char* GetMaskedAnchorString() const { return mask_anchor_str.c_str(); }
+	YoloModule(const XMLElement* element, Layer* l, CNNNetwork* network, InferenceModule* prev); 
 	bool Forward(ForwardContext& context); 
 	bool Backward(CudaTensor& delta);
-	bool OutputIRModel(ofstream& xml, ofstream& bin, stringstream& edges, size_t& bin_offset, int& l_index) const;
+	bool RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector<OpenVINOIRv7Edge>& edges, ofstream& bin, size_t& bin_offset, bool fp16)  {
+		return true;
+	}
+	void WriteOpenVINOOutput(ofstream& xml) const;
 	uint32_t GetFlops() const;
 };
