@@ -69,6 +69,9 @@ EltwiseModule::EltwiseModule(const XMLElement* element, Layer* l, CNNNetwork* ne
 		}
 		ir_params["operation"] = op_str;
 	}
+	else {
+		ir_params["operation"] = "SUM";
+	}
 	concat_prevs = false;
 	ParsePrevModules(element);
 	output_height = input_height;
@@ -118,7 +121,14 @@ bool EltwiseModule::Backward(CudaTensor& delta) {
 		cerr << "Error: " << name << ".backward failed due to shortcut delta error!\n";
 		return false;
 	}
-	return DistributeDeltas(delta);
+	for (int n = 0; n < prevs.size(); n++) {
+		InferenceModule* m = prevs[n].module;		 
+		if (!m->ShortcutDelta(delta, prevs[n].group_id)) {
+			cerr << "Error: " << name << ".backward.DistributeDeltas failed !\n";
+			return false;
+		} 
+	}
+	return delta.Release();
 }
  
 

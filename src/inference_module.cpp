@@ -25,7 +25,7 @@ InferenceModule::InferenceModule(const XMLElement* element, Layer* l, CNNNetwork
 	const char* id = element->Attribute("id");
 	if (!id) id = "conv1"; 
 	name = base + id;
-	cout << " INFO: Initializing " << name << " ...\n";
+	//cout << " INFO: Initializing " << name << " ...\n";
 	concat_prevs = true;
 	ir_type = nullptr; 
 }

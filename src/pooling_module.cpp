@@ -30,9 +30,14 @@ PoolingModule::PoolingModule(const XMLElement * element, Layer * l,CNNNetwork* n
 	string t(s ? s : "max-pool");
 	window_w = element->IntAttribute("size-w", 2);
 	window_h = element->IntAttribute("size-h", 2);
-
-	stride_w = element->IntAttribute("stride-w", 2);
-	stride_h = element->IntAttribute("stride-h", 2);
+	int stride  = element->IntAttribute("stride", 0);
+	if (0 == stride) {
+		stride_w = element->IntAttribute("stride-w", window_w);
+		stride_h = element->IntAttribute("stride-h", window_h);
+	}
+	else {
+		stride_w = stride_h = stride;
+	}
  
 	pad_wl = 0;
 	pad_ht = 0;

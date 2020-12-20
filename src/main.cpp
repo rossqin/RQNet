@@ -30,14 +30,12 @@ bool network_train(const char* data_definition, const char*  network_definition,
 	CNNNetwork network;
 	if (!network.Load(network_definition)) {
 		cout << " Failed! \n";
-		cerr << "Load network file `" << network_definition << "` failed!\n";
 		return false;
 	}
 	cout << " Done !\n Loading parameters from `" << weights_path << "`... ";
 	
 	if (*weights_path && !network.weights_pool.Load(weights_path)) {
 		cout << " Failed! \n";
-		cerr << "Load network file `" << weights_path << "` failed!\n";
 	}
 	if (GetAppConfig().UpdatePolicy() == Adam) {
 		string adam_weights_path(weights_path);
@@ -151,6 +149,8 @@ bool convert_openvino(const char*  network_definition, const char* weights_path,
 			return false;
 		}
 	}
+	// 2020-12-15: 今天调试发现fuse_norm 出现fp16和fp32数据相去甚远的情况，强行用fp32的方式处理
+	// 2020-12-16：原因是参数太大或者太小，转化过程中发生溢出。
 	CNNNetwork network;
 	if (!network.Load(network_definition, CUDNN_DATA_FLOAT)) {
 		cerr << "Error: Cannot load network definition file " << network_definition << endl;

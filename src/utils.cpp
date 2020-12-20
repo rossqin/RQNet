@@ -337,5 +337,5 @@ bool make_sure_dir_exists(const char* path) {
 	if (0 != (s.st_mode & S_IFDIR)) {
 		return true;
 	}
-	return 0 == mkdir(path);
+	return 0 == _mkdir(path);
 }

@@ -1,3 +1,4 @@
+#include <array>
 #include "stdafx.h"
 #include "network.h"
 #include "config.h"
@@ -652,7 +653,7 @@ bool CNNNetwork::Detect(const char* path) {
 	}
 	for (auto it : files) {
 		const char* filename = it.c_str();
-		std::cout << " Processing " << filename << " ...\n";
+		cout << " Processing " << filename << " ...\n";
 		cv::Mat mat = cv::imread(filename);
 		if (mat.empty()) {
 			cerr << "\nError: Cannot load image `" << filename << "`!\n";
@@ -737,7 +738,7 @@ bool CNNNetwork::Detect(const char* path) {
 		cv::imwrite(output_path, mat, params);
 	}
 
-	std::cout << " INFO: output written to predictions/!\n";
+	cout << " INFO: output written to predictions/!\n";
 	
 	return true;
 }
@@ -789,13 +790,13 @@ struct PredictionInfo {
 	int class_id;
 	int file_index;
 	int gt_index;
-	bool true_positive;
+	bool primary; // primary prediction of one gt
 	//PredResultType result;
 };
 bool compare_confidence(PredictionInfo p1, PredictionInfo p2) {
 	return p1.confidence > p2.confidence;
 }
-bool CNNNetwork::Eval() {
+bool CNNNetwork::Eval(bool all ) {
 	if (GetAppConfig().GetDatasetCount() == 0) {
 		cerr << " *** No dataset definitions in the configuration! *** \r\n";
 		return false;
@@ -803,14 +804,19 @@ bool CNNNetwork::Eval() {
 	if (input) delete[]input;
 	
 	for (int i = 0; i < GetAppConfig().GetDatasetCount(); i++) {
-		int total_ground_truths = 0;
+		vector<int> gts_by_cls;
+		for (int c = 0; c < classes.size(); c++) {			 
+			gts_by_cls.push_back(0);
+		}
+		
 		vector<PredictionInfo> performance_data;
 		const Dataset* ds = GetAppConfig().GetDataSet(i);
-		std::cout << "  Processing dataset `" << ds->GetName() << "`...\n";
+		cout << "  Processing dataset `" << ds->GetName() <<"` ";
 		Image img;
 		for (size_t j = 0; j < ds->GetSize(); j++) {
 			string filename = ds->FilenameAt(j);
-			std::cout << "   Loading `" << filename << "`...\n";
+			cout << ".";
+			//cout << "   Loading `" << filename << "`...\n";
 			if (!img.Load(filename.c_str(), input_channels)) {
 				cerr << "   Load failed!\n\n";
 				continue;
@@ -822,7 +828,9 @@ bool CNNNetwork::Eval() {
 			vector<ObjectInfo> gts;
 			if (!load_truths(replace_extension(filename, ".txt"), gts, classes.size()))
 				continue;
-			total_ground_truths += gts.size();
+			for (auto& gt : gts) {
+				gts_by_cls[gt.class_id] ++;
+			}
 			img.PullFromGPU();
 			detections.clear();
 			
@@ -834,7 +842,7 @@ bool CNNNetwork::Eval() {
 			PredictionInfo pdi;
 			unsigned int prev_predicts = performance_data.size();
 			for (int d = 0; d < detections.size(); d++) {
-				auto det = detections.at(d);				 
+				auto& det = detections.at(d);				 
 				Box det_box(det.x, det.y, det.w, det.h);
 				pdi.best_iou = 0.0f;
 				pdi.gt_index  = -1;
@@ -851,21 +859,18 @@ bool CNNNetwork::Eval() {
 				pdi.confidence = det.confidence;
 				pdi.class_id = det.class_id;
 				pdi.file_index = j;
-				pdi.true_positive = false;
-				//什么样的情况是true_positive?下面来整理一下
-				if (pdi.gt_index != -1) {
-					if (det.class_id == gts[pdi.gt_index].class_id) {
-						pdi.true_positive = pdi.best_iou > GetAppConfig().ThreshHold(); 
-					}
-					else
-						pdi.class_id = -1;
-				} 
-				for (unsigned int temp = prev_predicts ; temp < performance_data.size(); temp++) {
-					PredictionInfo& prev_p = performance_data[temp];
-					if (prev_p.gt_index == pdi.gt_index ) {
-						//对同一个gt预测的，只有iou 最大的才是tp
-						if (prev_p.best_iou > pdi.best_iou) {
-							pdi.true_positive = false;
+				pdi.primary = (pdi.gt_index != -1 && det.class_id == gts[pdi.gt_index].class_id);
+				if (pdi.primary) {
+					for (unsigned int i = prev_predicts; i < performance_data.size(); i++) {
+						PredictionInfo& prev_p = performance_data[i];
+						if (prev_p.gt_index == pdi.gt_index) {
+							// for one gt, we treat the prediction with the best_iou as primary prediction
+							if (prev_p.best_iou >= pdi.best_iou) {
+								pdi.primary = false;
+							}
+							else {
+								prev_p.primary = false;
+							}
 						}
 					}
 				}
@@ -874,163 +879,69 @@ bool CNNNetwork::Eval() {
 
 			input = nullptr;
 		}
-		// 按confidence从大到小排序
+		cout << "\n  " << ds->GetSize() << " files processed.\n  Configuration: Confidence Threshold: "
+			<< fixed << setprecision(2) << GetAppConfig().ThreshHold() << ", NMS Threshold: " << GetAppConfig().NMSThreshold() << endl; ;
+		// sort result by confidence desc
 		sort(performance_data.begin(), performance_data.end(), compare_confidence);
-		
-		// 用11点法计算mAP
-		float mAP = 0.0f;
-		for (int c = 0; c < classes.size(); c++) {
-			vector< pair<float, float> >prs;
-			float acc_TP = 0.0f, acc_FP = 0.0f;
-			float max_p = 0.0f, cur_base = 0.0f, best_p = 0.0f, avr_iou = 0.0f;
-			float r;
-			for (auto pdi : performance_data) {
-				if(pdi.class_id != c ) continue;
-				if (pdi.true_positive) {
-					acc_TP += 1.0f;
-					avr_iou += pdi.best_iou;
-				}
-				else
-					acc_FP += 1.0f;
-				float p = acc_TP / (acc_TP + acc_FP);
-				r = acc_TP / total_ground_truths;				
-				if (r - cur_base > 0.1f) {
-					prs.push_back(make_pair(cur_base,best_p ));
-					cur_base += 0.1f;
-					best_p = 0.0f;
-				}
-				else 
-					if (p > best_p) best_p = p;
+		vector<float> metric_ious = { 0.5f, 0.75f };
+		if (all) {
+			metric_ious.clear();
+			for (float metric_iou = 0.5f; metric_iou <= 0.95f; metric_iou += 0.05f) {
+				metric_ious.push_back(metric_iou);
 			}
-			//if (r != cur_base) {
-			prs.push_back(make_pair(cur_base, best_p));
-			//}
-			cout << "AP for " << classes[c].c_str() << " @ Threshold "<< fixed << setprecision(2) 
-				<< GetAppConfig().ThreshHold() <<": \n  ";
-			float ap = 0.0f;
-			for (auto pr : prs) {
-				cout << setprecision(2) << pr.first << "(" << setprecision(6) << pr.second << ") ";
-				ap += pr.second;
-			}
-			ap /= 0.11f;
-			avr_iou /= (acc_TP > 0)? acc_TP : 1.0f;
-			cout << "\n - " << fixed << setprecision(2) << ap  << "%, average iou:" << 
-				setprecision(4) << avr_iou<< endl;
-			mAP += ap;
 		}
-		mAP /= classes.size();
-		cout << "\n *** mAP is " << setprecision(2) <<  mAP << "%"<<  endl;
-	}
-	return true;
-}
-bool CNNNetwork::Eval_old() { 
-	
-	if (GetAppConfig().GetDatasetCount() == 0) {
-		cerr << " *** No dataset definitions in the configuration! *** \r\n";
-		return false;
-	} 
-	if (input) delete[]input;
-	vector<ObjectInfo> gts;
-	string filename(name);
-	filename += ".test.results.csv";
-	ofstream of(filename.c_str(),ios::trunc);
-	of << "Threshold, Avg IoU, Avg Conf, R@.5IoU, P@.5IoU, R@.75IoU, P@0.75IoU\n";
-	for (int i = 0; i < GetAppConfig().GetDatasetCount(); i++) { 
-		const Dataset* ds = GetAppConfig().GetDataSet(i);
-		int total_ground_truths = 0;
-		int total_recall50[10],total_recall75[10],total_predictions[10];
-		float total_iou[10],total_conf[10];
-		memset(total_recall50, 0, sizeof(int) * 10);
-		memset(total_recall75, 0, sizeof(int) * 10);
-		memset(total_predictions, 0, sizeof(int) * 10);
-		memset(total_iou, 0, sizeof(float) * 10);
-		memset(total_conf, 0, sizeof(float) * 10);
-
-		std::cout << "  Processing dataset `" << ds->GetName() << "`...\n";
-		Image img;
-
-		
-		of << ds->GetName().c_str() << ",,,,,,\n" << fixed << setprecision(4);
-		
-		for (size_t j = 0; j < ds->GetSize(); j++) {
-			string filename = ds->FilenameAt(j);
-			std::cout << "   Loading `" << filename << "`...\n";
-			if (!img.Load(filename.c_str(), input_channels)) {
-				cerr << "   Load failed!\n\n";
-				continue;
-			}
-			if (!img.ResizeTo(input_width, input_height, true)) {
-				cerr << "   Resize failed!\n\n";
-				continue;
-			}
-			if (!load_truths(replace_extension(filename, ".txt"), gts, classes.size()))
-				continue;
-			total_ground_truths += gts.size();
-			img.PullFromGPU();
-			
-			int index = 0;
-			for (float th = 0.5; th < 1.0f; th += 0.05f,index ++) {
-				detections.clear();
-				input = img.GetData();
-				GetAppConfig().ThreshHold(th);
-				if (!Forward(false)) return false;
-				input = nullptr;
-				int recall_50 = 0, recall_75 = 0, t_i = 0;
-				total_predictions[index] += detections.size();
-				CpuPtr<float> ious(detections.size());
-				CpuPtr<int> hits(gts.size());
-				for (auto it = gts.begin(); it != gts.end(); it++, t_i++) {
-					Box gt_box(it->x, it->y, it->w, it->h);
-					float best_iou = 0.0f;
-					int best_index = -1;
-					for (int d = 0; d < detections.size(); d++) {
-						auto det = detections.at(d);
-						if (det.class_id != (int)it->class_id) continue;
-						Box det_box(det.x, det.y, det.w, det.h);
-						float iou = BoxIoU(gt_box, det_box);
-						if (iou > best_iou) {
-							best_iou = iou;
-							best_index = d;
-						}
-					}
-					if (-1 == best_index) continue;// not recalled
-					if (ious.ptr[best_index] != 0.0f) {
-						// 1 detection refers to more than 1 gt
-						if (ious.ptr[best_index] > best_iou) continue; // previous gt has better iou
-						for (int t = 0; t < hits.Length(); t++) {
-							if (hits.ptr[t] + 1 == best_index)
-								hits.ptr[t] = 0;
-						}
-						ious.ptr[best_index] = best_iou;
-						hits.ptr[t_i] = best_index + 1;
+		array<float, 11> prs;
+		for(float metric_iou : metric_ious){
+			cout << "\n  AP for IoU " << fixed << setprecision(2) << metric_iou << ": ";
+			float mAP = 0.0f; 
+			for (int c = 0; c < classes.size(); c++) {
+				float acc_TP = 0.0f, acc_FP = 0.0f, avr_iou = 0.0f;
+				for (auto& pr : prs) {
+					pr = 0.0f;
+				}
+				for (auto& pdi : performance_data) {
+					if (pdi.class_id != c) continue;
+					if (pdi.primary && pdi.best_iou >= metric_iou) {
+						acc_TP += 1.0;
+						avr_iou += pdi.best_iou; 
 					}
 					else
-						ious.ptr[best_index] = best_iou;
+						acc_FP += 1.0f;
+					float cur_p = acc_TP / (acc_TP + acc_FP);
+					float cur_r = (gts_by_cls[c] > 0) ? acc_TP / gts_by_cls[c] : 1.0f;
+					int index = (int)floorf(cur_r * 10.0f);
+					if (prs[index] < cur_p)
+						prs[index] = cur_p;
+				}  
+				float ap = 0.0f; 
+				 
+				for (int i = 0; (i < 11) && (prs[i] != 0.0f); i++) { 
+					if (i < 10 && prs[i] < prs[i + 1])
+						prs[i] = prs[i + 1];
+					ap += prs[i]; 
 				}
-				for (int n = 0; n < ious.Length(); n++) {
-					if (ious.ptr[n] >= 0.75f) {
-						recall_75++;
-					}
-					if (ious.ptr[n] >= 0.5f) {
-						recall_50++;
-						total_iou[index] += ious.ptr[n];
-						total_conf[index] += detections.at(n).confidence;
-					}
+				ap /= 0.11f;
+				avr_iou /= (acc_TP > 0) ? acc_TP : 1.0f;
+				cout << fixed << setprecision(2) << ap << "%, average IoU: " <<
+					setprecision(4) << avr_iou << ", Recall: " << setprecision(2) << (acc_TP * 100 / gts_by_cls[c]) << "%.\n" ;
+				string split1(90, '=');
+				cout << "  " << split1 << "\n  R: "  ;
+				for (float r = 0.0f; r < 1.1f; r += 0.1f) {
+					cout << r << "    ";
 				}
-				total_recall50[index] += recall_50;
-				total_recall75[index] += recall_75;
+				string split2(90,'-'); 
+				cout << "\n  " << split2 << "\n  P: " << setprecision(4);
+				for (int i = 0; i < 11 ; i++) {
+					cout << prs[i] << "  ";
+				}
+				cout << endl;
+				mAP += ap;
+			}
+			if (classes.size() > 1) {
+				mAP /= classes.size();
+				cout << " mAP : " << setprecision(2) << mAP << "%\n\n";
 			}
 		}
-		int index = 0;
-		for (float th = 0.5f; th < 1.0f; th += 0.05f, index++) {
-			float r50 = total_recall50[index] * 100.0f / total_ground_truths;
-			float r75 = total_recall75[index] * 100.0f / total_ground_truths;
-			float p50 = total_recall50[index] * 100.0f / total_predictions[index];
-			float p75 = total_recall75[index] * 100.0f / total_predictions[index];
-			float avg_iou = total_iou[index] / total_ground_truths;
-			float avg_conf = total_conf[index] / total_ground_truths;
-			of << th << ", " << avg_iou << ", " << avg_conf << ", " << r50 << ", " << p50 << ", " << r75 << ", " << p75 << "\n";
-		} 
 	}
 	of.close();
 	return true;

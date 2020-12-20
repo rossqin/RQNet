@@ -315,7 +315,7 @@ bool CudaTensor::Release() {
 bool CudaTensor::Randomize() {
 	if (elements == 0) return true;
 	unique_ptr<float> ptr( New float[elements]);
-	uniform_real_distribution<double> uniform(0, 0.25f / elements);
+	uniform_real_distribution<float> uniform(0, 1.0f / (16 * elements));
 	default_random_engine engine;
 	engine.seed(chrono::system_clock::now().time_since_epoch().count());
 

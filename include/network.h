@@ -86,10 +86,7 @@ public:
 	inline int GetInputHeight() const { return input_height; }
 	inline int GetInputWidth() const { return input_width; }
 	inline int MiniBatch() const { return mini_batch; }
-	inline void AddTrainingResult( const TrainingResult& tr) {
-		training_results.push_back(tr);
-
-	} 
+	inline void AddTrainingResult( const TrainingResult& tr) { training_results.push_back(tr); } 
 	
 	inline const char* Precision() const { return (data_type == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	
@@ -110,11 +107,9 @@ public:
 	bool Load(const char* filename, cudnnDataType_t dt = CUDNN_DATA_DOUBLE);
 	Layer* GetLayer(int index) const ;
 	bool GetAnchor(int index, float& width, float& height, bool normalized = true);
-	//bool UpdateWorkspace(size_t new_size); 	
 	bool Train(bool restart);
 	bool Detect(const char* path);
-	bool Eval();
-	bool Eval_old();
+	bool Eval(bool all = false);
 
 	bool CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16 = true);
 	void GetAnchorsStr(string& str) const ;
