@@ -942,7 +942,6 @@ bool CNNNetwork::Eval(bool all ) {
 				cout << " mAP : " << setprecision(2) << mAP << "%\n\n";
 			}
 		}
-	}
-	of.close();
+	} 
 	return true;
 }
