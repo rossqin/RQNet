@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0" name="rq-yolov3" default-activation="leaky" >
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
+		<anchor width="10" height="14" />
+		<anchor width="27" height="23" />
+		<anchor width="37" height="58" />
+		<anchor width="75" height="67" />
+		<anchor width="93" height="104" />
+		<anchor width="187" height="163" />
+	</anchors>
+	<layers>
+		<layer id="layer01" 	desc="output: 208x208x24" >
+			<module id="conv1"	type="conv" filters="24" size="3" stride="2" />
+			<module id="norm1"	type="batch-norm"/>
+			<module id="act1" 	type="activation"/>
+		</layer> 
+		<layer id="stage1-s2"	desc="output: 104x104x48" > 
+			<module id="conv1-1" 	type="dwconv" filters="24" size="3" stride="2" />
+			<module id="norm1-1"	type="batch-norm"/> 
+			 
+			<module id="conv1-2" 	type="conv"  filters="24" size="1" />
+			<module id="norm1-2"	type="batch-norm"/>			
+			<module id="act1-2" 	type="activation" /> 
+			
+			<module id="conv2-1" 	type="conv"  filters="24" size="1" before="prev_layer.last" />
+			<module id="norm2-1"	type="batch-norm"/>			
+			<module id="act2-1" 	type="activation" />
+			
+			<module id="conv2-2" 	type="dwconv" filters="24" size="3" stride="2" />
+			<module id="norm2-2"	type="batch-norm"/>
+			
+			<module id="conv2-3" 	type="conv"  filters="24" size="1" />
+			<module id="norm2-3"	type="batch-norm"/>			
+			<module id="act2-3" 	type="activation" />
+			
+			<module id="split1"		type="split" groups="8"  before="act1-2,act2-3" />
+		</layer>
+		<layer id="stage1-s1-1" desc="output: 104x104x48" >
+			<module id="conv1"		type="conv"  filters="24" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="24" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="24" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="concat1"	type="concat" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<!-- default value of g:3 -->
+		<layer id="stage2-s2"	desc="output: 52x52x96" > 
+			<module id="conv1-1" 	type="dwconv" filters="48" size="3" stride="2" />
+			<module id="norm1-1"	type="batch-norm"/> 
+			 
+			<module id="conv1-2" 	type="conv"  filters="48" size="1" />
+			<module id="norm1-2"	type="batch-norm"/>			
+			<module id="act1-2" 	type="activation" /> 
+			
+			<module id="conv2-1" 	type="conv"  filters="48" size="1" before="prev_layer.last" />
+			<module id="norm2-1"	type="batch-norm"/>			
+			<module id="act2-1" 	type="activation" />
+			
+			<module id="conv2-2" 	type="dwconv" filters="48" size="3" stride="2" />
+			<module id="norm2-2"	type="batch-norm"/>
+			
+			<module id="conv2-3" 	type="conv"  filters="48" size="1" />
+			<module id="norm2-3"	type="batch-norm"/>			
+			<module id="act2-3" 	type="activation" />
+			
+			<module id="split1"		type="split" groups="8"  before="act1-2,act2-3" />
+		</layer>
+		<layer id="stage2-s1-1" desc="output: 52x52x96" >
+			<module id="conv1"		type="conv"  filters="48" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="48" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="48" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage2-s1-2" desc="output: 52x52x96" >
+			<module id="conv1"		type="conv"  filters="48" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="conv"  filters="48" size="3" groups="48" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="48" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage2-s1-3" desc="output: 52x52x96" >
+			<module id="conv1"		type="conv"  filters="48" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="conv"  filters="48" size="3" groups="48" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="48" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="concat1"		type="concat" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s2" 	desc="output: 26x26x192" > 
+			<module id="conv1-1" 	type="dwconv" filters="96" size="3" stride="2" />
+			<module id="norm1-1"	type="batch-norm"/> 
+			 
+			<module id="conv1-2" 	type="conv"  filters="96" size="1" />
+			<module id="norm1-2"	type="batch-norm"/>			
+			<module id="act1-2" 	type="activation" /> 
+			
+			<module id="conv2-1" 	type="conv"  filters="96" size="1" before="prev_layer.last" />
+			<module id="norm2-1"	type="batch-norm"/>			
+			<module id="act2-1" 	type="activation" />
+			
+			<module id="conv2-2" 	type="dwconv" filters="96" size="3" stride="2" />
+			<module id="norm2-2"	type="batch-norm"/>
+			
+			<module id="conv2-3" 	type="conv"  filters="96" size="1" />
+			<module id="norm2-3"	type="batch-norm"/>			
+			<module id="act2-3" 	type="activation" />
+			
+			<module id="split1"		type="split" groups="8"  before="act1-2,act2-3" />	
+		</layer>
+		<layer id="stage3-s1-1" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-2" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-3" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-4" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-5" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-6" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage3-s1-7" desc="output: 26x26x192" >
+			<module id="conv1"		type="conv"  filters="96" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="96" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="96" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="concat1"	type="concat" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage4-s2"	desc="output: 13x13x384" > 
+			<module id="conv1-1" 	type="dwconv" filters="192" size="3" stride="2" />
+			<module id="norm1-1"	type="batch-norm"/> 
+			 
+			<module id="conv1-2" 	type="conv"  filters="192" size="1" />
+			<module id="norm1-2"	type="batch-norm"/>			
+			<module id="act1-2" 	type="activation" /> 
+			
+			<module id="conv2-1" 	type="conv"  filters="192" size="1" before="prev_layer.last" />
+			<module id="norm2-1"	type="batch-norm"/>			
+			<module id="act2-1" 	type="activation" />
+			
+			<module id="conv2-2" 	type="dwconv" filters="192" size="3" stride="2" />
+			<module id="norm2-2"	type="batch-norm"/>
+			
+			<module id="conv2-3" 	type="conv"  filters="192" size="1" />
+			<module id="norm2-3"	type="batch-norm"/>			
+			<module id="act2-3" 	type="activation" />
+			
+			<module id="split1"		type="split" groups="8"  before="act1-2,act2-3" />		
+		</layer>
+		<layer id="stage4-s1-1" desc="output: 13x13x384" >
+			<module id="conv1"		type="conv"  filters="192" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="192" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="192" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage4-s1-2" desc="output: 13x13x384" >
+			<module id="conv1"		type="conv"  filters="192" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="192" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="192" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="split1"		type="split" groups="8" before="prev_layer.last[1+3+5+7],act3" />
+		</layer>
+		<layer id="stage4-s1-3" desc="output: 13x13x384" >
+			<module id="conv1"		type="conv"  filters="192" size="1" before="prev_layer.last[0+2+4+6]" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			
+			<module id="conv2"		type="dwconv"  filters="192" size="3" />
+			<module id="norm2"		type="batch-norm"/>
+			
+			<module id="conv3"		type="conv"  filters="192" size="1" />
+			<module id="norm3"		type="batch-norm"/>			
+			<module id="act3"		type="activation" />
+			
+			<module id="concat1"		type="concat" before="prev_layer.last[1+3+5+7],act3" />
+		</layer> 
+		<layer id="neck1"		desc="output: 13*13*384" >
+			<!--1x1+leaky-->
+			<module id="conv1x1" type="conv"  filters="1536" />			
+			<module id="norm1" type="batch-norm"  />
+			<module id="leaky.1" type="activation" />
+			<!--3x3dw+leaky-->
+			<module id="conv3x3dw" type="dwconv"  filters="1536" size="3" />
+			<module id="norm2" type="batch-norm"  />
+			<module id="leaky.2" type="activation" />
+			<!--1x1-->
+			<module id="conv-transform" type="conv"  filters="384" />			
+			<module id="norm3" type="batch-norm"  /> 
+			<module id="add" type="eltwise" operation="sum" before="norm3,prev_layer.last" />
+		</layer>
+		<layer id="detection.big" >
+			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true"/>
+			<module id="yolo"		type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="2" object-normalizer="1.0" bg-normalizer="0.05"/>
+		</layer>
+		<layer id="merge"		desc="output:26*26*256" >
+			<module id="conv1"		type="conv"  filters="128" size="1" before="stage4-s1-3.last" />
+			<module id="norm1"		type="batch-norm"/>
+			<module id="act1"		type="activation" />
+			<module id="up1"		type="upsample"  stride="2" />
+			<module id="conv2"		type="conv"  filters="128" size="1" before="stage3-s1-7.last" />
+			<module id="concat1"	type="concat" before="up1,conv2" />
+		</layer>
+		<layer id="neck2"		desc="output: 26*26*256" >
+			<!--1x1+leaky-->
+			<module id="conv1x1" type="conv"  filters="1024" />			
+			<module id="norm1" type="batch-norm"  />
+			<module id="leaky.1" type="activation" />
+			<!--3x3dw+leaky-->
+			<module id="conv3x3dw" type="dwconv"  filters="1024" size="3" />
+			<module id="norm2" type="batch-norm"  />
+			<module id="leaky.2" type="activation" />
+			<!--1x1-->
+			<module id="conv-transform" type="conv"  filters="256" />			
+			<module id="norm3" type="batch-norm"  /> 
+			<module id="add" type="eltwise" operation="sum" before="norm3,prev_layer.last" />
+		</layer>
+		<layer id="detection.small" >
+			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true" />
+			<module id="yolo"		type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="2.0" iou-normalizer="8" object-normalizer="4.0"  bg-normalizer="0.1"/>
+		</layer>
+		
+	</layers>
+</net>

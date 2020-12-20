@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RQNet-Config small-object="true"> 
+	<!--by default all *.jpg files under this folder are loaded as -->
+	<datasets>
+		<dataset name="my-dataset-for-testing">
+			<type>folder</type>
+			<path>E:\AI\Data\areca-train\test</path>
+		</dataset>
+	</datasets>
+	<thresh-hold>0.5</thresh-hold>
+	<nms-thresh-hold>0.7</nms-thresh-hold> 
+</RQNet-Config>

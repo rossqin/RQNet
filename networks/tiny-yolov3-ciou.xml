@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0" name="tiny-yolov3-ciou" default-activation="leaky">
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
+		<anchor width="10" height="14" />
+		<anchor width="27" height="23" />
+		<anchor width="37" height="58" />
+		<anchor width="75" height="67" />
+		<anchor width="93" height="104" />
+		<anchor width="187" height="163" />
+	</anchors>
+	<layers>
+		<layer id="layer01">
+			<module type="conv" id="convolution" filters="16" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer02">
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer03">
+			<module type="conv" id="convolution" filters="32" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer04">
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer05">
+			<module type="conv" id="convolution" filters="64" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer06">
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer07">
+			<module type="conv" id="convolution" filters="128" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer08">
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer09">
+			<module type="conv" id="convolution" filters="256" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer10">
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer11">
+			<module type="conv" id="convolution" filters="512" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer12">
+			<module id="pool" type="max-pool" window="2" stride="1" pads_begin="0,0" pads_end="1,1" />
+		</layer>
+		<layer id="layer13">
+			<module type="conv" id="convolution" filters="1024" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer14">
+			<module type="conv" id="convolution" filters="256" size="1" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer15">
+			<module type="conv" id="convolution" filters="512" size="3" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer16">
+			<module type="conv" id="convolution" filters="15" size="1" bias="true" /> 
+		</layer>
+		<layer id="layer17">
+			<module id="yolo" type="yolo-detection" anchor-masks="3,4,5"  class-normalizer="1.0" iou-normalizer="2.0" object-normalizer="1.0" bg-normalizer="0.05"/>
+		</layer>
+		<layer id="layer18">
+			<module type="conv" id="convolution" filters="128" size="1" />
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer19">
+			<module id="upsample" type="upsample" stride="2" />
+		</layer>
+		<layer id="layer20">
+			<module type="conv" id="convolution" filters="256" size="3" before="layer19.upsample,layer09.activation"/>
+			<module id="normalization" type="batch-norm" />
+			<module id="activation" type="activation" />
+		</layer>
+		<layer id="layer21">
+			<module type="conv" id="convolution" filters="15" size="1" bias="true" /> 
+		</layer>
+		<layer id="layer22">
+			<module id="yolo" type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="1.0" iou-normalizer="8.0" object-normalizer="4.0" bg-normalizer="0.1"/>
+		</layer>
+	</layers>
+</net>

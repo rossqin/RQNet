@@ -13,38 +13,40 @@
 	</datasets>
 	<thresh-hold>0.5</thresh-hold>
 	<nms-thresh-hold>0.7</nms-thresh-hold>
-	<train-settings freeze-conv="false" freeze-activation="false" freeze-batchnorm="false" hard-negative-mining="false">
+	<train-settings freeze-conv="false" freeze-activation="false" freeze-batchnorm="false" hard-negative-mining="true">
 		<dataset>my-dataset-for-training</dataset>
 		<save-input>false</save-input>
 		<focal-loss>true</focal-loss>
-		<params-update-policy>Adam</params-update-policy>
-		<input-files-dir>network-input</input-files-dir>
-		<termination>500000</termination>
+		<ciou-loss>true</ciou-loss>
+		<params-update-policy>ADAM</params-update-policy> 
+		<termination>100000</termination>
 		<weights>
-			<save>2000</save>
-			<output-dir>tiny-yolov3</output-dir>
-			<prefix>tiny-areca-bg-mining</prefix>
+			<save>500</save> 
 			<momentum>0.9</momentum> 
-			<decay>0.0005</decay>
+			<decay>0.01</decay>
 		</weights> 
 		<data-augment>
-			<jitter>0.05</jitter>
+			<jitter>0.075</jitter>
 			<saturation>1.2</saturation>
 			<exposure>1.2</exposure>
 			<hue>0.1</hue>
 		</data-augment>
-		<multi-scale enable="false" interval="10">
+		<multi-scale enable="true" interval="30">
 			<!-- w, h -->
 			<scale width="352" height="352" />
 			<scale width="384" height="384" />
 			<scale width="416" height="416" />
 			<scale width="448" height="448" />
 			<scale width="480" height="480" />
+			<scale width="512" height="512" />
+			<scale width="544" height="544" />
+			<scale width="576" height="576" />
+			<scale width="608" height="608" />
 		</multi-scale>
-		<batch>30</batch>
+		<batch>10</batch>
 		<subdivision>1</subdivision>
 		<learning-rate>
-			<base>0.001</base>
+			<base>0.0001</base>
 			<burn-in>1000</burn-in>
 			<policy>steps</policy>
 			<steps> 
