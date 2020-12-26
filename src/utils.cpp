@@ -266,6 +266,7 @@ void show_usage(const char* bin) {
 	cout << "\n       If input file is not given, then use a camera.\n\n\n";
 	cout << "  To convert .weights file to .rweights files:\n    " << bin << " wconv -c <path/to/darknet/network/config> -w <path/to/darknet/weights> [-o <dir/of/output>]\n\n\n";
 	cout << " To create openvino IR models\n    " << bin << " openvino -n <path/to/RQNet/network/definition> -w <path/to/rweights> -d <FP32|FP16> -o <dir/of/output> -name <modeltitle>\n"; 
+	cout << " To prune a trained weights(remove those channels with all zeros weights\n    " << bin << " prune -n <path/to/RQNet/network/definition> -w <path/to/rweights>\n";
 	cout << " *** ATTENSION ***\n\n";
 	cout << " This program is running only with CUDA support!\n\n";
 

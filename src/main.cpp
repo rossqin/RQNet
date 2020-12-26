@@ -16,7 +16,26 @@ static const char* get_file_name(const char* path) {
 		return f2 + 1;
 	return path;
 }
+bool network_prune(const char* data_definition, const char* network_definition,
+	const char* weights_path, float threshold ) {
+	cout << "\n Loading application configuration `" << data_definition << "` ... ";
+
+	if (!GetAppConfig().Load(data_definition)) {
+		cerr << "Load configuration file `" << data_definition << "` failed!\n";
+		return false;
+	}
+	cout << " Done!\n Loading network configuration `" << network_definition << "` ... ";
+	CNNNetwork network;
+	if (!network.Load(network_definition)) {
+		cout << " Failed! \n";
+		return false;
+	}
  
+	cout << " Done !\n";
+	return network.CheckAndPrune(weights_path, threshold);
+	 
+	return true; 
+}
 bool network_train(const char* data_definition, const char*  network_definition, 
 	const char* weights_path, bool restart) {
 
@@ -192,7 +211,7 @@ ArgDef defs[] = {
 	{ "-i", "", false, input_message },
 	{ "-o", "", false, output_message },
 	{ "-c","",  false, darknet_message },
-	{ "-t","", false, "data type: FP32 or FP16"},
+	{ "-threshold","", false, "threshold"},
 	{ "-r","", false, "prediction confidence threshold" },
 	{ "-restart", "false",false, ""},
 	{ "-name", "ir", false, "IR file name.\n"},
@@ -263,35 +282,40 @@ int main(int argc, char* argv[]) {
 	bool ret = false;
 	
 	
-	if (strcmp(command, "train") == 0) {
+	if (_strcmpi(command, "train") == 0) {
 		ret = network_train(FLAGS_d, FLAGS_n, FLAGS_w, defs[8].exists || defs[8].param == "true");
 	}
-	else if (strcmp(command, "eval") == 0) {
+	else if (_strcmpi(command, "eval") == 0) {
 		float threshold = 0.0f;
 		if (FLAGS_r && *FLAGS_r) {
 			threshold = atof(FLAGS_r);
 		}
 		ret = network_eval(FLAGS_d, FLAGS_n, FLAGS_w, threshold);
 	}
-	else if (strcmp(command, "detect") == 0) {
+	else if (_strcmpi(command, "detect") == 0) {
 		float threshold = 0.0f;
 		if (FLAGS_r && *FLAGS_r) {
 			threshold = atof(FLAGS_r);
 		}
-		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i,FLAGS_t , threshold);
+		ret = detect_image(FLAGS_d, FLAGS_n, FLAGS_w, FLAGS_i, defs[10].exists ? defs[10].param : "FP32", threshold);
 	}
-	else if (strcmp(command, "demo") == 0) {
+	else if (_strcmpi(command, "demo") == 0) {
 		ret = detect_video(FLAGS_n, FLAGS_w, FLAGS_i);
 	}
-	else if (strcmp(command, "dumpw") == 0) {
+	else if (_strcmpi(command, "dumpw") == 0) {
 		ret = dump_weight( FLAGS_w, FLAGS_o);
 	}
-	else if (strcmp(command, "wconv") == 0) {
+	else if (_strcmpi(command, "wconv") == 0) {
 		CNNNetwork network;
 		ret = network.weights_pool.TransformDarknetWeights(FLAGS_c, FLAGS_w, FLAGS_o); 
 	}
-	else if (strcmp(command, "openvino") == 0) {
+	else if (_strcmpi(command, "openvino") == 0) {
 		ret = convert_openvino(FLAGS_n, FLAGS_w, FLAGS_p, FLAGS_o, FLAGS_name);
+	}
+	else if (_strcmpi(command, "prune") == 0) {
+		float threshold = 1.0e-6f;
+		if (*FLAGS_t) threshold = fabs(atof(FLAGS_t));
+		ret = network_prune(FLAGS_d, FLAGS_n, FLAGS_w, threshold);
 	}
 	else {
 		show_usage(exe);

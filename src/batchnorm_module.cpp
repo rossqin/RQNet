@@ -181,3 +181,20 @@ bool BatchNormModule::Fuse() {
 	if (r) fused = true; 
 	return r;
 }
+extern bool prune_params(CudaTensor& params, const vector<bool>& v, bool input);
+bool BatchNormModule::PruneChannel(vector<PruneInfo>& prune_infos,float threshold) {
+	if (!InferenceModule::PruneChannel(prune_infos, threshold)) return false;
+
+	if (input_channels == output_channels) return true;
+	
+	//prev module pruned
+	for (auto& p : prune_infos) {
+		if (p.module != prevs[0].module) continue;
+		// params.DisplayInFile((name + ".params.before.txt").c_str()); 
+		if (!prune_params(params, p.channels_removed, true)) return false;
+		// params.DisplayInFile((name + ".params.post.txt").c_str());
+		output_channels = input_channels;
+	} 
+
+	return true;
+}

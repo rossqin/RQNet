@@ -18,6 +18,12 @@ bool PoolingModule::Resize(int w, int h) {
 		cudaFree(indexes);
 		indexes = nullptr;
 	}
+	// for channels pruning 
+	if (output_channels != input_channels) {
+		cout << "Input channels of `" << name << "` has changed, change ouput_channels to fit.\n";
+		output_channels = input_channels;
+	}
+
 	return cudaSuccess == cudaMalloc(&indexes, network->MiniBatch() * output_channels * output_height * output_width * sizeof(int));
  
 }

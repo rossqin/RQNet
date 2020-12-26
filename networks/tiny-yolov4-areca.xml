@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<net version="1.0" name="tiny-yolov4-areca">
+	<input>
+		<data_order>NCHW</data_order>
+		<data_type>FP32</data_type>
+		<channels>3</channels>
+		<height>416</height>
+		<width>416</width>
+	</input>	
+	<classes>
+		<class>areca</class>		
+	</classes> 
+	<anchors style="yolo">
+		<anchor width="10" height="14" />
+		<anchor width="27" height="23" />
+		<anchor width="37" height="58" />
+		<anchor width="75" height="67" />
+		<anchor width="93" height="104" />
+		<anchor width="187" height="163" />
+	</anchors>
+	<layers>
+		<layer id="layer01" desc="output:208*208*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3" stride="2" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer02" desc="output:104*104*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" stride="2" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer03" desc="output:104*104*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer04" desc="output:104*104*32">
+			<module id="split" 		type="split" groups="2" />
+		</layer> 
+		<layer id="layer05" desc="output:104*104*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3" before="prev_layer.last[0]" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer06" desc="output:104*104*32"  >
+			<module id="convolution"	type="conv" filters="32" size="3"  before="layer04.last[1]"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer08" desc="output:104*104*64"  >
+			<module id="convolution"	type="conv" filters="64" size="1" before="layer05.last,layer06.last"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer10" desc="output: 52* 52*128" >
+			<module id="concat" type="concat" before="layer03.last,layer08.last"  />
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer11" desc="output: 52* 52*128"  >
+			<module id="convolution"	type="conv" filters="128" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer12" desc="output: 52* 52*64"  >
+			<module id="split" 		type="split" groups="2" />
+		</layer>
+		<layer id="layer13" desc="output: 52* 52*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" before="prev_layer.last[0]" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer14" desc="output: 52* 52*64"  >
+			<module id="convolution"	type="conv" filters="64" size="3" before="layer12.last[1]" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer16" desc="output: 52* 52*128" >
+			<module id="convolution"	type="conv" filters="128" size="1" before="layer13.last,layer14.last" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="layer18" desc="output: 26* 26*256" >
+			<module id="concat" type="concat" before="layer11.last,layer16.last"  />
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer19" desc="output: 26* 26*256" >
+			<module id="convolution"	type="conv" filters="256" size="3"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer20" desc="output: 26* 26*128"  >
+			<module id="split" 		type="split" groups="2" />
+		</layer>
+		<layer id="layer21" desc="output: 26* 26*128" >
+			<module id="convolution"	type="conv" filters="128" size="3"  before="prev_layer.last[0]" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer22" desc="output: 26* 26*128" >
+			<module id="convolution"	type="conv" filters="128" size="3"  before="layer20.last[1]" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer24" desc="output: 26* 26*256" >
+			<module id="convolution"	type="conv" filters="256" size="1" before="layer21.last,layer22.last"/>
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer26" desc="output: 13* 13*512" >
+			<module id="concat" type="concat" before="layer19.last,layer24.last"  />
+			<module id="pool" type="max-pool" window="2" stride="2" />
+		</layer>
+		<layer id="layer27" desc="output: 13* 13*512" >
+			<module id="convolution"	type="conv" filters="256" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer28" desc="output: 13* 13*256" >
+			<module id="convolution"	type="conv" filters="256" size="1" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer29" desc="output: 13* 13*512" >
+			<module id="convolution"	type="conv" filters="512" size="3" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="detection.big" >
+			<module id="convolution"	type="conv" filters="15" size="1" />
+			<module id="yolo" type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="2" object-normalizer="1.0" bg-normalizer="0.05"/>
+		</layer>
+		<layer id="layer31" desc="output: 13* 13*128" >
+			<module id="convolution"	type="conv" filters="128" size="1" before="layer28.last" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" /> 
+		</layer>
+		<layer id="layer32" desc="output: 26* 26*128" > 
+			<module id="upsample" type="upsample"  stride="2" />
+		</layer>		
+		<layer id="layer33" desc="output: 26* 26*256" >
+			<module id="convolution"	type="conv" filters="256" size="3" before="layer24.last,layer32.last" />
+			<module id="normalization"	type="batch-norm"/>
+			<module id="activation" 	type="activation" />
+		</layer>
+		<layer id="detection.small" >
+			<module id="convolution"	type="conv" filters="15" size="1" />
+			<module id="yolo" type="yolo-detection" anchor-masks="0,1,2" class-normalizer="2.0" iou-normalizer="8" object-normalizer="4.0"  bg-normalizer="0.1"/>
+		</layer>
+	</layers>
+</net>

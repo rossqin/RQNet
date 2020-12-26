@@ -270,6 +270,29 @@ bool InferenceModule::ShortcutDelta(const CudaTensor& d, int group_id) {
 	}
 	return shortcut_delta.Add(d);
 }
+bool InferenceModule::PruneChannel(vector<PruneInfo>& prune_infos, float threshold) {
+	if (prune_infos.size() > 0) {
+		//todo: check whether previous output channels has changed .
+
+		if (name == "neck1.add") {
+			cout << "asdfasdf\n";
+		}
+		int channels = 0;
+		for (auto& p : prevs) { 
+			int c = p.module->GetOutputChannels();
+			if(concat_prevs)
+				channels += c;
+			else {
+				if (c > channels) channels = c;
+			}
+		}
+		if (input_channels != channels) {
+			input_channels = channels;
+			Resize(input_width, input_height);
+		}
+	}
+	return true;
+}
 bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	if (prevs.size() == 0) return true;
 	if (!concat_prevs) return false; 
@@ -357,7 +380,7 @@ bool InferenceModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector
 			InferenceModule* m = GetPrev(0,group_id);			  
 			for (auto& l : layers) {
 				if (l.using_module == m) {
-					edges.push_back({l.id, (group_id < 0) ? m->ir_output_port : group_id , this_layer.id, 0});
+					edges.push_back({l.id, (group_id < 0) ? m->ir_output_port : (m->ir_output_port + group_id), this_layer.id, 0});
 					break;
 				}
 			}

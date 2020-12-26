@@ -514,6 +514,39 @@ void CNNNetwork::GetAnchorsStr(string & str) const {
 		}
 	}
 }
+ 
+bool CNNNetwork::CheckAndPrune(const char* weights_file,float threshold) {
+	if(!weights_file) return false;
+	if (!weights_pool.Load(weights_file)) {
+		cerr << "Error : Load " << weights_file << " failed !\n";
+		return false;
+	}
+	vector<PruneInfo> prune_infos;
+	for (int i = 0; i < layers.size(); i++) {
+		Layer* l = layers[i];
+		for (int j = 0; j < l->modules.size(); j++) {
+			InferenceModule* m = l->modules[j];
+			cout << " Checking " << m->Name() << "...\n";
+			if (!m->PruneChannel(prune_infos, threshold)) {
+				return false;
+			}
+		}
+	}
+	if(prune_infos.size() > 0){
+		string outfile(weights_file);		
+		if (weights_pool.Save(replace_extension(outfile, ".pruned.rweights"))) {
+			cout << " Pruned weights are saved to " << outfile << endl;
+		}
+		else {
+			cerr << "Error : Saved " << outfile << " failed !\n";
+			return false;
+		}
+	}
+	else {
+		cout << " No prunable weights in " << weights_file << endl;
+	}
+	return true;
+}
 void DrawTruthInGrid(const cv::Mat& orig_img, int stride, const cv::Scalar& color, const vector<ObjectInfo>* truths) {
 	cv::Mat temp = cv::Mat::zeros(1024, 1024, CV_8UC3);
 

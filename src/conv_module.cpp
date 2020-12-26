@@ -47,7 +47,7 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 		network->weights_pool.Put(name + ".bias", &bias);
 	}
 	if (_strcmpi("dwconv", element->Attribute("type")) == 0) {
-		groups = output_channels;
+		groups = input_channels;
 	}
 	else 
 		groups = element->IntAttribute("groups", 1);
@@ -237,7 +237,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 	return true;
 }
 
-bool ConvolutionalModule::Resize(int w, int h) {
+bool ConvolutionalModule::Resize(int w_, int h) {
 	if (!conv_desc || ! w_desc) return false;
 	int b = network->MiniBatch();
 
@@ -250,14 +250,20 @@ bool ConvolutionalModule::Resize(int w, int h) {
 	bool created_x = false, created_y = false;
 	if (!x_desc) {
 		cudnnCreateTensorDescriptor(&x_desc);
-		cudnnSetTensor4dDescriptor(x_desc, network->DataFormat(), network->DataType(), b, input_channels, h, w);		
+		cudnnSetTensor4dDescriptor(x_desc, network->DataFormat(), network->DataType(), b, input_channels, h, w_);		
 		created_x = true;
 	}
 	if (!y_desc) {
 		cudnnCreateTensorDescriptor(&y_desc);
 		created_y = true;
 	}
-
+	if (groups > 1 && groups > input_channels) {
+		groups = input_channels;
+		if (CUDNN_STATUS_SUCCESS != cudnnSetConvolutionGroupCount(conv_desc, groups)) {
+			cudnnDestroyConvolutionDescriptor(conv_desc);
+			conv_desc = nullptr;
+		}
+	}
 
 	int c;
 	cudnnStatus_t err = cudnnGetConvolution2dForwardOutputDim(conv_desc, x_desc, w_desc, &b, &c, &output_height, &output_width);
@@ -291,7 +297,7 @@ bool ConvolutionalModule::Resize(int w, int h) {
 	if(created_y){
 		cudnnDestroyTensorDescriptor(y_desc);
 	}
-	input_width = w;
+	input_width = w_;
 	input_height = h;
 	return true;
 }
@@ -301,13 +307,7 @@ bool ConvolutionalModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, ve
 
 	CpuPtr<float> w_cpu(w.Elements() , w.Data());
 	CpuPtr<float> bias_cpu(bias.Elements(), bias.Data());
-#if 0
-	if (prevs.size() == 0) {
-		for (int i = w_cpu.Length() - 1; i >= 0; i--) {
-			w_cpu.ptr[i] /= 255.0f;
-		} 
-	}
-#endif
+
 	ir_params.clear(); 
 
 	char buffer[32]; 
@@ -388,3 +388,156 @@ bool ConvolutionalModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, ve
 uint32_t ConvolutionalModule::GetFlops() const {
 	return 0;
 }
+
+bool prune_params(CudaTensor& params, const vector<bool>& v, bool input) {
+	CpuPtr<float> saved(params.Elements(), params.Data());
+	int prune_count = 0;
+	for (bool b : v) {
+		if (b) prune_count++;
+	}
+	int c_size = params.Height() * params.Width();
+	int b_size = params.Channel() * c_size;
+	bool ret = true;
+	if (input) {
+		int saved_channels = params.Channel();
+		if (!params.Init({ params.Batch(),saved_channels - prune_count , params.Height(), params.Width() })) {
+			cerr << "Params reinitialization failed!\n";
+			return false;
+		}
+		float* buffer = New float[params.Elements()];
+		for (int b = 0; b < params.Batch(); b++) {
+			float* dst = buffer + b * params.Channel() * c_size;
+			float* src = saved.ptr + b * b_size;
+			for (int sc = 0; sc < saved_channels; sc++, src += c_size) {
+				if (!v[sc]) {
+					memcpy(dst, src, c_size * sizeof(float));
+					dst += c_size;
+				}
+			}
+		}
+		ret = params.Push(buffer, 0, params.Elements());
+		delete[]buffer;
+	}
+	else {
+		int saved_batch = params.Batch();
+		if (!params.Init({ params.Batch() - prune_count, params.Channel(), params.Height(), params.Width() })) {
+			cerr << "Params reinitialization failed!\n";
+			return false;
+		}
+		float* buffer = New float[params.Elements()];
+		float* dst = buffer;
+		float* src = saved.ptr;
+		for (int b = 0; b < saved_batch; b++, src += b_size) {
+			if (!v[b]) {
+				memcpy(dst, src, b_size * sizeof(float));
+				dst += b_size;
+			}
+		}
+		ret = params.Push(buffer, 0, params.Elements());
+		delete[]buffer;
+	}
+	return ret;
+}
+/***/
+
+
+bool ConvolutionalModule::PruneChannel(vector<PruneInfo>& prune_infos, float threshold) {
+	if (!InferenceModule::PruneChannel(prune_infos, threshold)) return false;
+	int kw = w.Width();
+	int kh = w.Height();
+	// Check wheter input_channels has changed.
+	int expected_wc = input_channels / groups;
+	bool ic_changed = (expected_wc != w.Channel());
+	if (input_channels == groups) {
+		if (input_channels != output_channels) {
+			ic_changed = true; // for dwconv
+			output_channels = input_channels;
+		}
+	}
+
+	int c_size = w.Height() * w.Width();
+	if (prune_infos.size() > 0) {
+		if (ic_changed) {
+			// find the match prune info
+			int g = -1;
+			InferenceModule* m = GetPrev(0, g, false);
+			vector<bool>* v = nullptr;
+			while (m) {
+				for (auto& p : prune_infos) {
+					if (p.module == m) {
+						v = &(p.channels_removed);
+						break;
+					}
+				}
+				if (v) break;
+				m = m->GetPrev(0, g, false);
+			}
+			if (m) {
+				if (!v) {
+					cerr << "Error: Depthwise convolution module `" << name << "` cannot be pruned!\n";
+					return false;
+				}
+				//w.DisplayInFile((name + ".w.init.txt").c_str());
+				if (groups == input_channels) { // dwconv, 
+					if (!prune_params(w, *v, false)) return false;
+				}
+				else if (groups == 1) { //normal conv
+					if (!prune_params(w, *v, true)) return false;
+				}
+				else {
+					cerr << "Error: Group convolution module `" << name << "` has not been supported yet!\n";
+					return false;
+				} 
+				
+				if (groups == input_channels) {
+					cout << " INFO: The input channels and filters of `" << name << "` set to " << input_channels << "!\n";
+					return true;
+				}
+				else
+					cout << " INFO: The input channels of `" << name << "` set to " << input_channels << "!\n";
+		 
+
+			}
+		}
+	}
+
+	PruneInfo info;
+	info.module = this;
+	info.removed_channel_count = 0;
+	bool pruned = false;
+	info.channels_removed.assign(output_channels, pruned);
+
+	CpuPtr<float> weights_in_cpu(w.Elements(), w.Data());
+
+	for (int i = 0; i < output_channels; i++) {
+		float sq_sum = 0.0f;
+		for (int j = 0;  j < expected_wc; j++) {
+			int n = (i * expected_wc + j) * c_size;
+			for (int k = 0; k < c_size; k++, n++) {
+				float f = weights_in_cpu.ptr[n];
+				sq_sum += f * f;
+			}
+		}
+		if (sq_sum < threshold) {
+			info.channels_removed[i] = true;
+			info.removed_channel_count++;
+		}
+	}
+	if (info.removed_channel_count > 0) {
+		//w.DisplayInFile((name + ".weights.before.txt").c_str());
+		if (!prune_params(w, info.channels_removed, false)) return false;
+		//w.DisplayInFile((name + ".weights.post.txt").c_str());
+		if (bias.Elements() > 0) {
+			//bias.DisplayInFile((name + ".bias.before.txt").c_str());
+			if (!prune_params(bias, info.channels_removed, true)) return false;
+			//bias.DisplayInFile((name + ".bias.post.txt").c_str());
+		}
+		output_channels -= info.removed_channel_count;
+		cout << " INFO: The filters value of `" << name << "` set to " << output_channels << "!\n";
+		prune_infos.push_back(info);
+	}
+
+
+	return true;
+}
+

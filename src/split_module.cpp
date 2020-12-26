@@ -29,6 +29,7 @@ SplitModule::SplitModule(const XMLElement* element, Layer* l, CNNNetwork* net, I
 		outputs.push_back(temp);
 		deltas.push_back(temp);
 	}
+	forward_input = nullptr;
 }
 
 bool SplitModule::Resize(int w, int h) {

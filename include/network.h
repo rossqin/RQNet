@@ -113,4 +113,5 @@ public:
 
 	bool CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16 = true);
 	void GetAnchorsStr(string& str) const ;
+	bool CheckAndPrune(const char* weights_file,float threshold=1.0e-6f);
 };

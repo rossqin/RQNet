@@ -7,6 +7,11 @@ bool EltwiseModule::Resize(int w, int h) {
 	input_width = w;
 	output_width = input_width;
 	output_height = input_height;
+	// for channels pruning 
+	if (output_channels != input_channels) {
+		cout << "Input channels of `" << name << "` has changed, change ouput_channels to fit.\n";
+		output_channels = input_channels;
+	}
 	return true;
 }
 
