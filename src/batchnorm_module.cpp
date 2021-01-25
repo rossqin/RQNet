@@ -17,6 +17,9 @@ BatchNormModule::BatchNormModule(const XMLElement * element, Layer * l, CNNNetwo
 
 	ParsePrevModules(element);	
 
+	ConvolutionalModule* conv = dynamic_cast<ConvolutionalModule*>(prev);
+	if (conv) conv->following_bn = this;
+
 	output_width = input_width;
 	output_height = input_height;
 	output_channels = input_channels;
@@ -136,9 +139,25 @@ bool BatchNormModule::UpdateParams(float lr) {
 	
 	if (freezed) return true;
 
+	if (GetAppConfig().PruneChannels()) {
+		//TODO: check data type, presume fp32
+		void* gamma = params.BatchData(1);
+		void* gamma_update = training_params.BatchData(1);
+		float decay = GetAppConfig().Decay(); 
+		CpuPtr<float> temp(output_channels, gamma);
+		CpuPtr<float> temp1(output_channels, gamma_update);
+		for (int i = 0; i < output_channels; i++) {
+			if (temp.ptr[i] > 0)
+				temp1.ptr[i] -= decay;
+			else 
+				temp1.ptr[i] += decay;
+		}
+		training_params.Push(temp1.ptr, output_channels, output_channels);
+	} //*/
+
 	switch(cfg.UpdatePolicy()){
 	case SGD : 
-		return sgd_update(params, training_params, output_channels * 2, params.DataType(), lr , false);
+		return sgd_update(params.BatchData(0), training_params.BatchData(0), output_channels * 2, params.DataType(), lr , false);
  
 	case Adam:
 		{
@@ -181,20 +200,56 @@ bool BatchNormModule::Fuse() {
 	if (r) fused = true; 
 	return r;
 }
-extern bool prune_params(CudaTensor& params, const vector<bool>& v, bool input);
-bool BatchNormModule::PruneChannel(vector<PruneInfo>& prune_infos,float threshold) {
-	if (!InferenceModule::PruneChannel(prune_infos, threshold)) return false;
 
-	if (input_channels == output_channels) return true;
+
+bool BatchNormModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
+	if (prevs.size() != 1 || prevs[0].group_id != -1) return false; 
+
+	ConvolutionalModule* module = dynamic_cast<ConvolutionalModule*>(prevs[0].module);
+	if (!module) return false; 
+	valid_channels = module->valid_channels;
+	int prune_c = 0;
+	CpuPtr<float> buffer(output_channels);
+	params.Pull(buffer.ptr, output_channels, output_channels);
+	for (int i = 0; i < output_channels; i++) {
+		if (!valid_channels[i]) continue;
+		if (fabs(buffer.ptr[i]) < c_threshold) {
+			cout << "  * channel " << i << ": gamma = " << buffer.ptr[i] << "\n";
+			valid_channels[i] = false;
+			prune_c++;
+		}
+	}
+	if (prune_c == 0) return true; 
+	prune_c = 0;
+	for (int i = 0; i < output_channels; i++) {
+		module->valid_channels[i] = valid_channels[i];
+		if (!valid_channels[i]) prune_c++; 
+	}
+	cout << " Redundant Channels in " << module->Name() << " : " << prune_c << ".\n\n";
+	return true;
+}
+bool BatchNormModule::Prune() { 
+	valid_channels = prevs[0].module->valid_channels;
+	int new_oc = 0;
+	for (int i = 0; i < output_channels; i++) {
+		if (valid_channels[i]) new_oc++;
+	}
+	if (new_oc == output_channels) return true;
+	CpuPtr<float> buffer(params.Elements());
+	params.Pull(buffer.ptr, 0, params.Elements());
+	int dest = 0;
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < output_channels; j++) {
+			if (valid_channels[j]) {
+				buffer.ptr[dest++] = buffer[i * output_channels + j];
+			}
+		}
+	}
+	if (!params.Init({ 4,new_oc,1,1 })) return false;
+	if (!params.Push(buffer.ptr, 0, dest)) return false;
 	
-	//prev module pruned
-	for (auto& p : prune_infos) {
-		if (p.module != prevs[0].module) continue;
-		// params.DisplayInFile((name + ".params.before.txt").c_str()); 
-		if (!prune_params(params, p.channels_removed, true)) return false;
-		// params.DisplayInFile((name + ".params.post.txt").c_str());
-		output_channels = input_channels;
-	} 
+	cout << " Channels of " << name << " reduced from " << output_channels << " to " << new_oc << ".\n\n";
+	output_channels = new_oc;
 
 	return true;
 }

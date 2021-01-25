@@ -56,7 +56,9 @@ protected:
 	int stop_interation; 
 
 	bool save_input;
-	bool neg_mining ;
+	bool neg_mining;
+	bool channel_pruning;
+	bool save_adam_params;
 
 	int save_weight_interval;
 	
@@ -133,6 +135,8 @@ public :
 	inline bool ConvParamsFreezed() const { return freeze_conv_params; }
 	inline bool BNParamsFreezed() const { return freeze_bn_params; }
 	inline bool FocalLoss() const { return focal_loss; } 
+	inline bool PruneChannels() const { return channel_pruning; }
+	inline bool SaveAdamParams() const { return save_adam_params; }
 
 	inline bool FastResize() const { return fast_resize; }
 	inline int GetDatasetCount() const { return (int)datasets.size(); }

@@ -17,13 +17,15 @@
 		<dataset>my-dataset-for-training</dataset>
 		<save-input>false</save-input>
 		<focal-loss>true</focal-loss>
+		<save-adam-params>false</save-adam-params>
 		<ciou-loss>true</ciou-loss>
+		<channel-pruning>false</channel-pruning>
 		<params-update-policy>ADAM</params-update-policy> 
 		<termination>100000</termination>
 		<weights>
 			<save>500</save> 
 			<momentum>0.9</momentum> 
-			<decay>0.01</decay>
+			<decay>0.005</decay>
 		</weights> 
 		<data-augment>
 			<jitter>0.075</jitter>
@@ -41,17 +43,18 @@
 			<scale width="512" height="512" />
 			<scale width="544" height="544" />
 			<scale width="576" height="576" />
-			<scale width="608" height="608" />
+			<!--scale width="608" height="608" / -->
 		</multi-scale>
 		<batch>10</batch>
 		<subdivision>1</subdivision>
 		<learning-rate>
-			<base>0.0001</base>
-			<burn-in>1000</burn-in>
+			<base>0.001</base>
+			<burn-in>0</burn-in>
 			<policy>steps</policy>
 			<steps> 
-				<step iteration="80000" rate="0.000001" />
-				<step iteration="100000" rate="0.0000001" />
+				<step iteration="300000" rate="0.000001" />
+				<step iteration="600000" rate="0.0000001" />
+				<step iteration="900000" rate="0.00000001" />
 			</steps>
 		</learning-rate>
 	</train-settings>

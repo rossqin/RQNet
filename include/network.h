@@ -50,6 +50,8 @@ enum NMSType { DEFAULT_NMS = 0, GREEDY_NMS, DIOU_NMS, CORNERS_NMS };
  
 class CNNNetwork {
 protected: 
+	int override_height;
+	int override_width;
 	int mini_batch;
 	int input_channels;
 	int input_width;
@@ -80,7 +82,7 @@ public:
 	string name;
 	ParamPool weights_pool;
 	ParamPool adam_weights_pool;
-	CNNNetwork();
+	CNNNetwork(int h = 0, int w = 0);
 	~CNNNetwork();
 	inline int GetInputChannels() const { return input_channels; }
 	inline int GetInputHeight() const { return input_height; }
@@ -113,5 +115,5 @@ public:
 
 	bool CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16 = true);
 	void GetAnchorsStr(string& str) const ;
-	bool CheckAndPrune(const char* weights_file,float threshold=1.0e-6f);
+	bool CheckAndPrune(const char* weights_file, float c_threshold, float w_threshold=1.0e-6f);
 };

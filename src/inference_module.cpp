@@ -270,29 +270,7 @@ bool InferenceModule::ShortcutDelta(const CudaTensor& d, int group_id) {
 	}
 	return shortcut_delta.Add(d);
 }
-bool InferenceModule::PruneChannel(vector<PruneInfo>& prune_infos, float threshold) {
-	if (prune_infos.size() > 0) {
-		//todo: check whether previous output channels has changed .
 
-		if (name == "neck1.add") {
-			cout << "asdfasdf\n";
-		}
-		int channels = 0;
-		for (auto& p : prevs) { 
-			int c = p.module->GetOutputChannels();
-			if(concat_prevs)
-				channels += c;
-			else {
-				if (c > channels) channels = c;
-			}
-		}
-		if (input_channels != channels) {
-			input_channels = channels;
-			Resize(input_width, input_height);
-		}
-	}
-	return true;
-}
 bool InferenceModule::DistributeDeltas(CudaTensor & delta) {
 	if (prevs.size() == 0) return true;
 	if (!concat_prevs) return false; 
@@ -390,7 +368,7 @@ bool InferenceModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, vector
 	 
 			OpenVINOIRv7Layer* pl = &this_layer;
 			if (add_virtual_concat) {
-				pl = New OpenVINOIRv7Layer(this_layer.id++, name + ".concat", "Concat", network->Precision());
+				pl = New OpenVINOIRv7Layer(this_layer.id++, name + ".concat", "Concat", fp16 ? "FP16" : "FP32");
 			}
 			int pid = 0;
 			for (int i = 0; i < prevs.size(); i++) {
@@ -444,4 +422,33 @@ InferenceModule* InferenceModule::GetPrev(int n, int& group_id, bool ignore_bn) 
 		
 	}
 	return ret;
+}
+bool InferenceModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
+
+	valid_channels.assign(input_channels, true);
+	if (prevs.size() == 1) {
+		if (prevs[0].group_id == -1)
+			valid_channels = prevs[0].module->valid_channels;
+		else {
+			cout << " Hint: partial connection to " << name << ", pruning may be failed.\n";
+		}
+	}
+	else {
+		int index = 0;
+		valid_channels.assign(input_channels, true);
+		for (int i = 0; i < prevs.size(); i++) {
+			auto& p = prevs[i];
+			if (p.group_id == -1) {
+				for (int j = 0; j < p.module->output_channels; j++) {
+					valid_channels[j + index] = p.module->valid_channels[j];
+				}
+				index += p.module->output_channels;
+			}
+			else {
+				cout << " Hint: partial connection to " << name << ", pruning may be failed.\n";
+				index += p.module->GetOutputChannels();
+			}
+		}
+	} 
+	return true;
 }

@@ -24,6 +24,7 @@ ConvolutionalModule::ConvolutionalModule(const XMLElement * element,
 	workspace_size = 0; 
 	conv_desc = nullptr; 
 	w_desc = nullptr;
+	following_bn = nullptr;
 	output_channels = element->IntAttribute("filters", input_channels);
 	int width = 1, height = 1;
 	int sz = element->IntAttribute("size", 0);
@@ -211,6 +212,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 		dbias = 0.0f;
 		return true;
 	} 
+	bool l1_norm = !(GetAppConfig().PruneChannels());
 	switch (cfg.UpdatePolicy()) {
 	case SGD:
 	{ 
@@ -219,7 +221,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 			if (!sgd_update(bias, dbias, output_channels, bias.DataType(), lr, false)) return false;
 
 		}
-		return sgd_update(w, dw, w.Elements(), w.DataType(), lr, true);
+		return sgd_update(w, dw, w.Elements(), w.DataType(), lr, l1_norm);
 
 	}
 	case Adam: 
@@ -229,7 +231,7 @@ bool ConvolutionalModule::UpdateParams(float lr) {
 			int t = network->cur_iteration;
 			if (!adam_update(bias, dbias, adam_bias_m, adam_bias_v, bias.Elements(), t, bias.DataType(), lr, false)) return false;
 		}
-		return adam_update(w, dw, adam_m, adam_v, w.Elements(), t, w.DataType(), lr, true);
+		return adam_update(w, dw, adam_m, adam_v, w.Elements(), t, w.DataType(), lr, l1_norm);
 	}
 	default:
 		return true;
@@ -386,7 +388,8 @@ bool ConvolutionalModule::RenderOpenVINOIR(vector<OpenVINOIRv7Layer>& layers, ve
 	return InferenceModule::RenderOpenVINOIR(layers,edges,bin,bin_offset, fp16);
 }
 uint32_t ConvolutionalModule::GetFlops() const {
-	return 0;
+	//int nweights = (input_channels / groups) * output_channels * size * size;
+	return 2 * w.Elements() * output_height * output_width;
 }
 
 bool prune_params(CudaTensor& params, const vector<bool>& v, bool input) {
@@ -438,104 +441,118 @@ bool prune_params(CudaTensor& params, const vector<bool>& v, bool input) {
 	}
 	return ret;
 }
-/***/
-
-
-bool ConvolutionalModule::PruneChannel(vector<PruneInfo>& prune_infos, float threshold) {
-	if (!InferenceModule::PruneChannel(prune_infos, threshold)) return false;
-	int kw = w.Width();
-	int kh = w.Height();
-	// Check wheter input_channels has changed.
-	int expected_wc = input_channels / groups;
-	bool ic_changed = (expected_wc != w.Channel());
-	if (input_channels == groups) {
-		if (input_channels != output_channels) {
-			ic_changed = true; // for dwconv
-			output_channels = input_channels;
-		}
-	}
-
-	int c_size = w.Height() * w.Width();
-	if (prune_infos.size() > 0) {
-		if (ic_changed) {
-			// find the match prune info
-			int g = -1;
-			InferenceModule* m = GetPrev(0, g, false);
-			vector<bool>* v = nullptr;
-			while (m) {
-				for (auto& p : prune_infos) {
-					if (p.module == m) {
-						v = &(p.channels_removed);
-						break;
-					}
+bool ConvolutionalModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
+	
+	InferenceModule::CheckRedundantChannels(c_threshold, w_threshold);
+	valid_in_channels = valid_channels;
+	if (groups != input_channels) {
+		valid_channels.assign(output_channels, true);
+	} 
+	int prune_c = 0;
+	CpuPtr<float> buffer(w.Elements());
+	float* p = buffer.ptr;
+	bool change_prev = false;
+	if(!w.Pull(p,  0, buffer.Length())) return false;	
+	for (int i = 0; i < output_channels; i++, p+= w.Elements3D()) { 
+		float sum = 0.0f;
+		for (int j = 0; j < w.Elements3D(); j++)
+			sum += fabs(p[j]);
+		if (sum < w_threshold) {
+			prune_c++;
+			valid_channels[i] = false; 
+			if (groups == input_channels) {
+				if (valid_in_channels[i]) {
+					change_prev = true;
+					valid_in_channels[i] = false;
 				}
-				if (v) break;
-				m = m->GetPrev(0, g, false);
-			}
-			if (m) {
-				if (!v) {
-					cerr << "Error: Depthwise convolution module `" << name << "` cannot be pruned!\n";
-					return false;
-				}
-				//w.DisplayInFile((name + ".w.init.txt").c_str());
-				if (groups == input_channels) { // dwconv, 
-					if (!prune_params(w, *v, false)) return false;
-				}
-				else if (groups == 1) { //normal conv
-					if (!prune_params(w, *v, true)) return false;
-				}
-				else {
-					cerr << "Error: Group convolution module `" << name << "` has not been supported yet!\n";
-					return false;
-				} 
-				
-				if (groups == input_channels) {
-					cout << " INFO: The input channels and filters of `" << name << "` set to " << input_channels << "!\n";
-					return true;
-				}
-				else
-					cout << " INFO: The input channels of `" << name << "` set to " << input_channels << "!\n";
-		 
-
 			}
 		}
 	}
-
-	PruneInfo info;
-	info.module = this;
-	info.removed_channel_count = 0;
-	bool pruned = false;
-	info.channels_removed.assign(output_channels, pruned);
-
-	CpuPtr<float> weights_in_cpu(w.Elements(), w.Data());
-
+	if (change_prev) {
+		if (prevs.size() == 1 && prevs[0].group_id == -1)
+			prevs[0].module->valid_channels = valid_in_channels;
+		else {
+			cout << " Hint: Prunning for " << name << " may not be correct! \n";
+		}
+	}
+	if (0 == prune_c) return true; // no extra redundancy
+	prune_c = 0;
 	for (int i = 0; i < output_channels; i++) {
-		float sq_sum = 0.0f;
-		for (int j = 0;  j < expected_wc; j++) {
-			int n = (i * expected_wc + j) * c_size;
-			for (int k = 0; k < c_size; k++, n++) {
-				float f = weights_in_cpu.ptr[n];
-				sq_sum += f * f;
+		if (!valid_channels[i]) prune_c++;
+	}	
+	cout << " Redundant Channels in " << name << " : " << prune_c << ".\n\n"; 
+	return true; 
+}
+//TODO: input_channels != groups && groups != 1
+bool ConvolutionalModule::Prune() {
+	if (input_channels == groups) { //dwconv 
+		for (int i = 0; i < input_channels; i++) {
+			if (valid_channels[i] != valid_in_channels[i]) { 
+				cout << " Hint : Confict pruning params for " << name << ".\n";
+				valid_channels = valid_in_channels;
+				break;
 			}
 		}
-		if (sq_sum < threshold) {
-			info.channels_removed[i] = true;
-			info.removed_channel_count++;
+
+	}
+	int new_ic = 0, new_oc = 0;
+	for (int i = 0; i < input_channels; i++) {
+		if (valid_in_channels[i]) new_ic++;
+	}
+	for (int i = 0; i < output_channels; i++) {
+		if (valid_channels[i]) new_oc++;
+	}
+	if (new_ic == input_channels && new_oc == output_channels) return true;
+
+	CpuPtr<float> buffer(w.Elements());
+	w.Pull(buffer.ptr, 0, w.Elements());
+	int c = (input_channels == groups) ? 1 : new_ic; 
+	CpuPtr<float> buffer_new(new_oc * c * w.Elements2D());
+	int s_index = 0, d_index = 0;
+	for (int i = 0; i < output_channels; i++) {
+		if (!valid_channels[i]) {
+			s_index += w.Elements3D();
+			continue;
+		}
+		if (1 == c) {
+			memcpy(buffer_new.ptr + d_index, buffer.ptr + s_index, w.Elements2D() * sizeof(float));
+			d_index += w.Elements2D();
+			s_index += w.Elements2D();
+			continue;
+
+		} 
+		for (int j = 0; j < w.Channel(); j++) {
+			if (!valid_in_channels[j]) {
+				s_index += w.Elements2D();
+				continue;
+			}
+			memcpy(buffer_new.ptr + d_index, buffer.ptr + s_index, w.Elements2D() * sizeof(float));
+			d_index += w.Elements2D();
+			s_index += w.Elements2D();
 		}
 	}
-	if (info.removed_channel_count > 0) {
-		//w.DisplayInFile((name + ".weights.before.txt").c_str());
-		if (!prune_params(w, info.channels_removed, false)) return false;
-		//w.DisplayInFile((name + ".weights.post.txt").c_str());
-		if (bias.Elements() > 0) {
-			//bias.DisplayInFile((name + ".bias.before.txt").c_str());
-			if (!prune_params(bias, info.channels_removed, true)) return false;
-			//bias.DisplayInFile((name + ".bias.post.txt").c_str());
+	if(!w.Init({ new_oc, c, w.Width(), w.Height() })) return false;
+	if (!w.Push(buffer_new.ptr, 0, w.Elements())) return false;
+
+	if (new_oc != output_channels && bias.Channel() == output_channels) {
+		CpuPtr<float> cp1(output_channels);
+		bias.Pull(cp1.ptr, 0, output_channels);
+		CpuPtr<float> cp2(new_oc);
+		for (int i = 0,j = 0; i < output_channels; i++) {
+			if (valid_channels[i]) {
+				cp2.ptr[j++] = cp1.ptr[i];
+			}
 		}
-		output_channels -= info.removed_channel_count;
-		cout << " INFO: The filters value of `" << name << "` set to " << output_channels << "!\n";
-		prune_infos.push_back(info);
+		if (!bias.Init({ 1,new_oc,1,1 })) return false;
+		if (!bias.Push(cp2.ptr, 0, new_oc)) return false;
+
 	}
+	cout << " Weights of " << name << " from [" << output_channels << "," << input_channels / groups
+		<< "," << w.Width() << "," << w.Height() << "] to [" << new_oc << "," << c << "," <<
+		w.Width() << "," << w.Height() << "] \n\n";
+	input_channels = new_ic;
+	output_channels = new_oc;
+	
 
 
 	return true;

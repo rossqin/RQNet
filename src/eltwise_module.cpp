@@ -135,5 +135,33 @@ bool EltwiseModule::Backward(CudaTensor& delta) {
 	}
 	return delta.Release();
 }
+
+uint32_t EltwiseModule::GetFlops() const {
+	return input_channels * output_channels * output_height * output_width;
+}
+
+bool EltwiseModule::CheckRedundantChannels(float c_threshold, float w_threshold) { 
+	bool pruned = false;
+	vector<string> names; 
+	valid_channels.assign(output_channels, true);
+	for (int i = 0; i < prevs.size(); i++) {
+		InferenceModule* m = prevs[i].module;
+		for (int j = 0; j < output_channels; j++) {
+			if (m->valid_channels[j] != valid_channels[j]) {
+				m->valid_channels[j] = false;
+				valid_channels[j] = false;
+				pruned = true;
+			}
+		}
+	}
+	if (pruned) {
+		int prune_c = 0;
+		for (int i = 0; i < output_channels; i++) {
+			if (!valid_channels[i]) prune_c++;
+		}
+		cout << " Redundant Channels in " << name << " : " << prune_c << ".\n\n";
+	}
+	return true;
+}
  
 

@@ -24,6 +24,8 @@ const char* AppConfig::LoadTrainingSection(XMLElement * root ) {
 	const char* dataset_name = te->GetText("dataset");
 	te->QueryIntText("termination", stop_interation);
 	te->QueryBoolText("focal-loss", focal_loss);
+	te->QueryBoolText("channel-pruning", channel_pruning);
+	te->QueryBoolText("save-adam-params", save_adam_params);
 	te->QueryBoolText("ciou-loss", use_ciou_loss);
 	te->QueryBoolText("adversarial", adversarial);
 	te->QueryIntText("weights/save", save_weight_interval);
@@ -111,6 +113,8 @@ AppConfig::AppConfig() {
 	da_exposure = 1.0;
 	da_hue = 0.0;
 
+	channel_pruning = false;
+	save_adam_params = false;
 	//multi_scale
 
 	ms_enable = false;

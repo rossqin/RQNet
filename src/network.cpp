@@ -13,7 +13,7 @@
 #include "OpenVINO.h"
 
  
-CNNNetwork::CNNNetwork() {
+CNNNetwork::CNNNetwork(int h ,int w) {
 	data_type = CUDNN_DATA_FLOAT; 
 	data_format = CUDNN_TENSOR_NCHW; 
 	def_actvation = "leaky";
@@ -23,6 +23,8 @@ CNNNetwork::CNNNetwork() {
 	detection_layers = 2;  
 	nms_type = DEFAULT_NMS;
 	current_training_rotates = nullptr; 
+	override_height = h;
+	override_width = w;
 	 
 }
 
@@ -135,16 +137,24 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 			data_type = dt;
 
 		if(data_type == CUDNN_DATA_HALF) 
-			cout << "\n *** Data type: FP16\n";
+			cout << "\n Data type: FP16. ";
 		else
-			cout << "\n *** Data type: FP32\n";
+			cout << "\n Data type: FP32. ";
 		input_channels = 3;
 		input_width = 416;
 		input_height = 416;
 		inputElement->QueryIntText("channels", input_channels);
-		inputElement->QueryIntText("width", input_width);
-		inputElement->QueryIntText("height", input_height); 
-		input = New float[mini_batch * input_channels * input_width * input_height];
+		if (override_height > 0)
+			input_height = override_height;
+		else
+			inputElement->QueryIntText("height", input_height);
+
+		if (override_width > 0)
+			input_width = override_width;
+		else 
+			inputElement->QueryIntText("width", input_width);
+		int elements = mini_batch * input_channels * input_width * input_height;
+		input = New float[elements];
 	}
 	XMLElement* classElement = root->FirstChildElement("classes/class");
 	while (classElement) {
@@ -225,10 +235,14 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	}
 	XMLElement* layerElement = root->FirstChildElement("layers/layer"); 
 	InferenceModule* last_module = nullptr;
+	float bflops = 0.0f;
 	while (layerElement) {
 		Layer* layer = NULL;
 		try {
 			layer = New Layer(layerElement,  this, last_module);
+			for (auto& m : layer->modules) {
+				bflops += m->GetFlops();
+			}
 			layers.push_back(layer);
 			layerElement = layerElement->NextSiblingElement();
 		}
@@ -238,6 +252,10 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 		}
 		
 	}
+	bflops /= 1000000000.0f;
+	cout << " Input dimensions: [" << mini_batch << ", " << input_channels << ", " << input_width << ", " << input_height
+		<< "], Computational complexity: " << fixed << setprecision(3) << bflops << " billion flops. \n";
+
 	truths = New LPObjectInfos[mini_batch];
 	for (int i = 0; i < mini_batch; i++) {
 		truths[i] = New vector<ObjectInfo>();
@@ -377,7 +395,7 @@ bool CNNNetwork::Train(bool restart ) {
 			if (weights_pool.Save(weights_file, cur_iteration)) {
  				cout << " INFO: Save weights to `" << weights_file << "` ! \n";
 			}
-			if (GetAppConfig().UpdatePolicy() == Adam) {
+			if (GetAppConfig().UpdatePolicy() == Adam && GetAppConfig().SaveAdamParams()) {
 				sprintf_s(weights_file, MAX_PATH, "%s/%s-%d.adam.rweights", name.c_str(), def_actvation.c_str(), cur_iteration);
 				if (!adam_weights_pool.Save(weights_file, cur_iteration)) {
 					cerr << " Warning: Save adam weights to `" << weights_file << " failed` ! \n";
@@ -502,6 +520,10 @@ bool CNNNetwork::CreateOpenVINOIRv7(const string& dir, const string& ir_name, bo
 	}
 	xml << "\t</outputs>\n</net>\n";
 	xml.close();
+	float mp;
+	if (fp16) mp = offset / 2000000.0f;
+	else mp = offset / 4000000.0f;
+	cout << "\n INFO: " << fixed << setprecision(3) << mp <<" million parameters written to `" << prefix << ".bin` !\n";
 	return true;
 } 
 void CNNNetwork::GetAnchorsStr(string & str) const {
@@ -515,31 +537,42 @@ void CNNNetwork::GetAnchorsStr(string & str) const {
 	}
 }
  
-bool CNNNetwork::CheckAndPrune(const char* weights_file,float threshold) {
+bool CNNNetwork::CheckAndPrune(const char* weights_file, float c_threshold, float w_threshold) {
 	if(!weights_file) return false;
 	if (!weights_pool.Load(weights_file)) {
 		cerr << "Error : Load " << weights_file << " failed !\n";
 		return false;
 	}
-	vector<PruneInfo> prune_infos;
+
 	for (int i = 0; i < layers.size(); i++) {
 		Layer* l = layers[i];
 		for (int j = 0; j < l->modules.size(); j++) {
 			InferenceModule* m = l->modules[j];
 			cout << " Checking " << m->Name() << "...\n";
-			if (!m->PruneChannel(prune_infos, threshold)) {
+			if (!m->CheckRedundantChannels(c_threshold,w_threshold)) {
+				cerr << " Error : CheckRedundantChannels failed at " << m->Name() << "!\n";
 				return false;
 			}
 		}
 	}
-	if(prune_infos.size() > 0){
-		string outfile(weights_file);		
-		if (weights_pool.Save(replace_extension(outfile, ".pruned.rweights"))) {
-			cout << " Pruned weights are saved to " << outfile << endl;
+	bool pruned = false;
+	for (int i = 0; i < layers.size(); i++) {
+		Layer* l = layers[i];
+		for (int j = 0; j < l->modules.size(); j++) {
+			InferenceModule* m = l->modules[j];
+			cout << " Prune " << m->Name() << "...\n";
+			int saved_channels = m->GetOutputChannels();
+			if (!m->Prune()) {
+				cerr << " Error : Prunning failed at " << m->Name() << "!\n";
+				return false;
+			}
+			if (saved_channels != m->GetOutputChannels()) pruned = true;
 		}
-		else {
-			cerr << "Error : Saved " << outfile << " failed !\n";
-			return false;
+	}
+	if(pruned){
+		string s(weights_file);		
+		if (weights_pool.Save(replace_extension(s, ".prune.rweights"))) {
+			cout << "Successfully save pruned model to " << s << "!\n";
 		}
 	}
 	else {
@@ -925,8 +958,10 @@ bool CNNNetwork::Eval(bool all ) {
 		}
 		array<float, 11> prs;
 		for(float metric_iou : metric_ious){
-			cout << "\n  AP for IoU " << fixed << setprecision(2) << metric_iou << ": ";
+			stringstream ss;
+			cout << "\n  *** Under IoU " << fixed << setprecision(2) << metric_iou << " *** \n";
 			float mAP = 0.0f; 
+			float cur_p = 0.0f, cur_r = 0.0f;
 			for (int c = 0; c < classes.size(); c++) {
 				float acc_TP = 0.0f, acc_FP = 0.0f, avr_iou = 0.0f;
 				for (auto& pr : prs) {
@@ -940,12 +975,18 @@ bool CNNNetwork::Eval(bool all ) {
 					}
 					else
 						acc_FP += 1.0f;
-					float cur_p = acc_TP / (acc_TP + acc_FP);
-					float cur_r = (gts_by_cls[c] > 0) ? acc_TP / gts_by_cls[c] : 1.0f;
+					cur_p = acc_TP / (acc_TP + acc_FP);
+					cur_r = (gts_by_cls[c] > 0) ? acc_TP / gts_by_cls[c] : 1.0f;
 					int index = (int)floorf(cur_r * 10.0f);
 					if (prs[index] < cur_p)
 						prs[index] = cur_p;
-				}  
+				}
+				//2021.01.25 fix
+				for (int i = 0; i < 10; i++) {
+					for (int j = i + 1; j < 11; j++) {
+						if (prs[j] > prs[i]) prs[i] = prs[j];
+					}
+				}
 				float ap = 0.0f; 
 				 
 				for (int i = 0; (i < 11) && (prs[i] != 0.0f); i++) { 
@@ -955,25 +996,29 @@ bool CNNNetwork::Eval(bool all ) {
 				}
 				ap /= 0.11f;
 				avr_iou /= (acc_TP > 0) ? acc_TP : 1.0f;
-				cout << fixed << setprecision(2) << ap << "%, average IoU: " <<
-					setprecision(4) << avr_iou << ", Recall: " << setprecision(2) << (acc_TP * 100 / gts_by_cls[c]) << "%.\n" ;
+				cout << "\n  AP:" << ap << "%, R:" <<  (acc_TP * 100 / gts_by_cls[c]) << "%, P:" << (cur_p * 100.0f) << "%, IoU:" << setprecision(4) << avr_iou  ;
 				string split1(90, '=');
-				cout << "  " << split1 << "\n  R: "  ;
+				ss << fixed << setprecision(2) << "  " << split1 << "\n  R:"  ;
 				for (float r = 0.0f; r < 1.1f; r += 0.1f) {
-					cout << r << "    ";
+					ss << r << "    ";
 				}
 				string split2(90,'-'); 
-				cout << "\n  " << split2 << "\n  P: " << setprecision(4);
+				ss << "\n  " << setprecision(4) << split2 << "\n  P:";
 				for (int i = 0; i < 11 ; i++) {
-					cout << prs[i] << "  ";
+					ss << prs[i] << "  ";
 				}
-				cout << endl;
+				ss << endl;
 				mAP += ap;
 			}
 			if (classes.size() > 1) {
 				mAP /= classes.size();
-				cout << " mAP : " << setprecision(2) << mAP << "%\n\n";
+				cout << ", mAP:" << setprecision(2) << mAP << "%\n";
 			}
+			else {
+				float F1score = (2.0f * cur_p * cur_r) / (cur_p + cur_r);
+				cout << ", F1:" <<  F1score << "\n";
+			}
+			cout << ss.str();
 		}
 	} 
 	return true;
