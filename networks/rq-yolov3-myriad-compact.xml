@@ -293,7 +293,7 @@
 		</layer>
 		<layer id="detection.big" >
 			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true"/>
-			<module id="yolo"		type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="0.5" object-normalizer="10.0" bg-normalizer="0.05"/>
+			<module id="yolo"		type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="2.0" object-normalizer="10.0" bg-normalizer="0.05"/>
 		</layer>
 		<layer id="merge"		desc="output:26*26*256" >
 			<module id="conv1"		type="conv"  filters="128" size="1" before="stage4-s1-3.last" />
@@ -319,7 +319,7 @@
 		</layer>
 		<layer id="detection.small" >
 			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true" />
-			<module id="yolo"		type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="2.0" iou-normalizer="1.0" object-normalizer="20.0"  bg-normalizer="0.1"/>
+			<module id="yolo"		type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="2.0" iou-normalizer="4.0" object-normalizer="20.0"  bg-normalizer="0.1"/>
 		</layer>
 		
 	</layers>

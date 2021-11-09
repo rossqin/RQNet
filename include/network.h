@@ -63,6 +63,7 @@ protected:
 	vector<string> classes;
 	vector< pair<float, float> > anchors;
 	
+	pair<int, float> classfied_result;
 	vector<DetectionResult> detections;
 	vector<TrainingResult> training_results;
 	ModulePool module_pool;
@@ -99,6 +100,7 @@ public:
 	inline cudnnDataType_t DataType() const { return  data_type; }
 	inline int DataSize() const { return data_size; }
 	void AddDetectionResult(const DetectionResult& data);
+	inline void SetClassfiedResult(int class_id, float confidence) { classfied_result.first = class_id, classfied_result.second = confidence; }
 
 	inline int GetClassCount() const { return (int)classes.size(); }
 	inline const string& GetClassName(int i) const { return classes[i]; }
@@ -111,6 +113,7 @@ public:
 	bool GetAnchor(int index, float& width, float& height, bool normalized = true);
 	bool Train(bool restart);
 	bool Detect(const char* path);
+	bool Classify(const char* path);
 	bool Eval(bool all = false);
 
 	bool CreateOpenVINOIRv7(const string& dir, const string& ir_name, bool fp16 = true);

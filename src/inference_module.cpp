@@ -170,6 +170,9 @@ InferenceModule* InferenceModule::FromXmlElement(const XMLElement* element,  Lay
 	else if(mtype =="shuffle"){
 		module = New ShuffleModule(element, layer, network, prev);
 	}
+	else if (mtype == "classifier") {
+		module = New ClassifierModule(element, layer, network, prev);
+	}
 	//TODO: Add your New Moule here.
 
 	if (module)
@@ -423,32 +426,41 @@ InferenceModule* InferenceModule::GetPrev(int n, int& group_id, bool ignore_bn) 
 	}
 	return ret;
 }
-bool InferenceModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
-
-	valid_channels.assign(input_channels, true);
-	if (prevs.size() == 1) {
-		if (prevs[0].group_id == -1)
-			valid_channels = prevs[0].module->valid_channels;
-		else {
-			cout << " Hint: partial connection to " << name << ", pruning may be failed.\n";
+void InferenceModule::SyncValidChannels(vector<bool>& vc, int s, int n, int g) {	
+	if (n > valid_channels.size()) n = valid_channels.size();
+	for (int i = 0, j = s ; i < n; i++, j++) {
+		if (vc[j] != valid_channels[i]) {
+			vc[j] = false;
+			valid_channels[i] = false;
 		}
 	}
+	//TODO: complicated situations
+}
+bool InferenceModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
+
+	valid_channels.assign(input_channels, true); 
+	// batchnorm, activation, split, eltwise, concat
+	if (prevs.size() == 1) {
+		if (prevs[0].group_id != -1) {
+			cerr << " Hint : " << name << " has incorrect prev module.\n";
+		}
+		valid_channels = prevs[0].module->valid_channels; 
+	}
 	else {
-		int index = 0;
-		valid_channels.assign(input_channels, true);
-		for (int i = 0; i < prevs.size(); i++) {
-			auto& p = prevs[i];
-			if (p.group_id == -1) {
-				for (int j = 0; j < p.module->output_channels; j++) {
-					valid_channels[j + index] = p.module->valid_channels[j];
-				}
-				index += p.module->output_channels;
-			}
-			else {
-				cout << " Hint: partial connection to " << name << ", pruning may be failed.\n";
-				index += p.module->GetOutputChannels();
+		if (concat_prevs) { 
+			int start = 0; 
+			for (int i = 0; i < prevs.size(); i++) {				
+				prevs[i].module->SyncValidChannels(valid_channels, start, 
+					prevs[i].module->GetOutputChannels(), prevs[i].group_id);
+				start  += prevs[i].module->GetOutputChannels();
 			}
 		}
-	} 
+		else {
+			for (int i = 0; i < prevs.size(); i++) {
+				prevs[i].module->SyncValidChannels(valid_channels, 0, input_channels, prevs[i].group_id);					 
+			}
+		}
+	}
+	 
 	return true;
 }

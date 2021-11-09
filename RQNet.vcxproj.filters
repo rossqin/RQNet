@@ -81,6 +81,9 @@
     <ClCompile Include="src\eltwise_module.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\classfier_module.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\stdafx.h">

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<net version="1.0" name="rq-yolov3-prune2" default-activation="leaky" >
+<net version="1.0" name="rq-yolov3-areca" default-activation="leaky" >
 	<input>
 		<data_order>NCHW</data_order>
 		<data_type>FP32</data_type>
 		<channels>3</channels>
-		<height>352</height>
-		<width>352</width>
+		<height>416</height>
+		<width>416</width>
 	</input>	
 	<classes>
 		<class>areca</class>		

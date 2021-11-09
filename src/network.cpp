@@ -3,15 +3,14 @@
 #include "network.h"
 #include "config.h"
 #include "data_loader.h"
-#include "param_pool.h"
+#include "param_pool.h" 
 #include <opencv2/opencv.hpp>
-#include <opencv2/highgui.hpp>
 #include "image.h"
 #include "box.h" 
 #include <direct.h>
 #include "yolo.h"
 #include "OpenVINO.h"
-
+using namespace cv;
  
 CNNNetwork::CNNNetwork(int h ,int w) {
 	data_type = CUDNN_DATA_FLOAT; 
@@ -78,7 +77,8 @@ void CNNNetwork::AddDetectionResult(const DetectionResult & data) {
 	detections.push_back(data);
 
 }
-
+// 2021.02.26 patch
+bool create_dir_in_loading = false;
 bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	tinyxml2::XMLDocument doc;
 	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
@@ -108,11 +108,12 @@ bool CNNNetwork::Load(const char* filename, cudnnDataType_t dt) {
 	if (temp) {
 		def_actvation = temp;
 	}
-	 
-	struct stat s = { 0 };
-	stat(name.c_str(), &s);
-	if (0 == (s.st_mode & S_IFDIR)) {
-		_mkdir(name.c_str());
+	if (create_dir_in_loading) {
+		struct stat s = { 0 };
+		stat(name.c_str(), &s);
+		if (0 == (s.st_mode & S_IFDIR)) {
+			_mkdir(name.c_str());
+		}
 	}
 	XMLElement* inputElement = root->FirstChildElement("input");
 	if (inputElement) {
@@ -351,34 +352,36 @@ bool CNNNetwork::Train(bool restart ) {
 			if (!Forward(true)) return false;  
 			if (!Backward()) return false;   
 		}
-		float loss = 0.0f, box_loss = 0.0f, obj_loss = 0.0f, cls_loss = 0.0f, iou = 0.0f;
-		stringstream ss; 
-
-		for (TrainingResult& r : training_results) {
-			loss += (r.obj_loss + r.box_loss + r.cls_loss); 
-			box_loss += r.box_loss;
-			obj_loss += r.obj_loss;
-			cls_loss += r.cls_loss;
-			iou += r.iou;
-		}
-		loss /= training_results.size(); 
-		box_loss /= training_results.size();
-		obj_loss /= training_results.size();
-		cls_loss /= training_results.size();
-		iou /= total_objects;
-
-		if (avg_loss < 0)
-			avg_loss = loss;
-		else
-			avg_loss = avg_loss * 0.9 + loss * 0.1;
-		int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;		 
 		float lr = GetAppConfig().GetCurrentLearningRate(cur_iteration);
-		cout << "  * loss : " << fixed << setprecision(4) << loss << " [" << obj_loss << "(o)+" << box_loss << "(b)";
-		if (classes.size() > 1)
-			cout << "+" << cls_loss << "(c)";
-		cout << "], avg-loss: " << avg_loss << ", iou: " << iou << ", lr:" << defaultfloat << lr << ", " << ms << "ms, " << total_images << " images.\n\n";
-		
-		
+		if (training_results.size() > 0) {
+			float loss = 0.0f, box_loss = 0.0f, obj_loss = 0.0f, cls_loss = 0.0f, iou = 0.0f;
+			stringstream ss;
+
+			for (TrainingResult& r : training_results) {
+				loss += (r.obj_loss + r.box_loss + r.cls_loss);
+				box_loss += r.box_loss;
+				obj_loss += r.obj_loss;
+				cls_loss += r.cls_loss;
+				iou += r.iou;
+			}
+			loss /= training_results.size();
+			box_loss /= training_results.size();
+			obj_loss /= training_results.size();
+			cls_loss /= training_results.size();
+			iou /= total_objects;
+
+			if (avg_loss < 0)
+				avg_loss = loss;
+			else
+				avg_loss = avg_loss * 0.9 + loss * 0.1;
+			int ms = (clock() - start_clk) * 1000 / CLOCKS_PER_SEC;
+			
+			cout << "  * loss : " << fixed << setprecision(4) << loss << " [" << obj_loss << "(o)+" << box_loss << "(b)";
+			if (classes.size() > 1)
+				cout << "+" << cls_loss << "(c)";
+			cout << "], avg-loss: " << avg_loss << ", iou: " << iou << ", lr:" << defaultfloat << lr << ", " << ms << "ms, " << total_images << " images.\n\n";
+		}
+#if 0		
 		ofstream ofs(filename,ios::app);
 		if (ofs.is_open()) {
 			//sprintf(info, "")
@@ -386,7 +389,7 @@ bool CNNNetwork::Train(bool restart ) {
 				<< fixed << setprecision(4) << loss << ",\t"  << avg_loss <<  endl;
 			ofs.close();
 		}
-		
+#endif		
 		for (auto l : layers) {
 			if (!l->Update(lr)) return false;
 		} 
@@ -664,24 +667,31 @@ void hsl2rgb(double hue, double sat, double light, uchar* rgb) {
 	rgb[2] = calc_color(temp1, temp2, temp3);
 
 }
+static void bright_enchance(unsigned char* data, float factor) {
 
-bool CNNNetwork::Detect(const char* path) {
+	factor -= 0.5f; 
+	float temp = (*data) * (1.0f + 0.5f * factor) + 20 * factor;
+	if (temp < 0.0f) temp = 0.0f;
+	else if (temp > 255.0f) temp = 510.0f - temp;
+	*data = (unsigned char)roundf(temp);
+}
+bool CNNNetwork::Classify(const char* path) {
 	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !path)
 		return false;
 
 	vector<string> files;
-	struct stat s = { 0 }; 
+	struct stat s = { 0 };
 	string folder(path);
 	stat(path, &s);
-	if (s.st_mode & _S_IFDIR) {		
+	if (s.st_mode & _S_IFDIR) {
 		char c = path[folder.length() - 1];
 		if (c != '/' && c != '\\')
-			folder += SPLIT_CHAR; 
+			folder += SPLIT_CHAR;
 		string search_str = folder + "*.*";
 		_finddata_t find_data;
 		intptr_t handle = _findfirst(search_str.c_str(), &find_data);
 		if (handle == -1) {
-			cerr << "Error: Failed to find first file under `" << folder.c_str() << "`!\n";
+			cerr << "\n Error: Failed to find first file under `" << folder.c_str() << "`!\n";
 			return false;
 		}
 		bool cont = true;
@@ -692,6 +702,8 @@ bool CNNNetwork::Detect(const char* path) {
 					is_suffix(find_data.name, ".JPG") ||
 					is_suffix(find_data.name, ".png") ||
 					is_suffix(find_data.name, ".PNG") ||
+					is_suffix(find_data.name, ".jfif") ||
+					is_suffix(find_data.name, ".JFIF") ||
 					is_suffix(find_data.name, ".bmp") ||
 					is_suffix(find_data.name, ".BMP")
 					) {
@@ -705,15 +717,10 @@ bool CNNNetwork::Detect(const char* path) {
 	}
 	else
 		files.push_back(path);
-	char output_path[MAX_PATH];
-	sprintf_s(output_path, MAX_PATH, "predictions@%.2f", GetAppConfig().ThreshHold());
-	stat(output_path, &s);
-	if (0 == (s.st_mode & _S_IFDIR)) {
-		_mkdir(output_path);
-	}
+	 
 	for (auto l : layers) {
 		if (!l->FuseBatchNormModule()) {
-			cerr << " FuseBatch error @ " << l->GetName() << "! \n\n";
+			cerr << "\n Error:FuseBatch error @ " << l->GetName() << "! \n\n";
 			return false;
 		}
 	}
@@ -722,11 +729,11 @@ bool CNNNetwork::Detect(const char* path) {
 		cout << " Processing " << filename << " ...\n";
 		cv::Mat mat = cv::imread(filename);
 		if (mat.empty()) {
-			cerr << "\nError: Cannot load image `" << filename << "`!\n";
+			cerr << "\n Error: Cannot load image `" << filename << "`!\n";
 			return false;
 		}
 		if (input) delete[]input;
-
+		int orig_elements = mat.cols * mat.rows;
 		cv::Size sz(input_width, input_height);
 		cv::Mat temp = cv::Mat::zeros(sz, CV_8UC3);
 		resize(mat, temp, sz);
@@ -742,68 +749,459 @@ bool CNNNetwork::Detect(const char* path) {
 				}
 			}
 		}
-
+		if (GetAppConfig().tracing) {
+			make_sure_dir_exists("featuremaps");
+		}
 		ForwardContext context = { false, false, false, nullptr };
 		detections.clear();
-		for (auto l : layers) { 
+		for (auto l : layers) {
 			if (!l->Forward(context)) {
-				cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
+
+				cerr << "\n Error: Forward failed in  " << l->GetName() << "!\n";
 				input = nullptr;
 				return false;
 			}
-		}
-		input = nullptr;
+			if (!GetAppConfig().tracing || l->modules.size() == 0) continue;
 
-		int l, r, t, b;
-		cv::Mat overlay = cv::Mat::zeros(mat.size(), CV_8UC3);
-		
-		uchar rgb[3];
-		vector<cv::Scalar> colors;
-		for (int i = 0; i < (int)detections.size(); i++) { 
-			hsl2rgb(0.6 + (i + 1.0f) / detections.size() * 0.4 , 1.0, 0.5, rgb);
-			cv::Scalar color(rgb[0], rgb[1], rgb[2]);
-			colors.push_back(color);
-		}
-		unsigned seed = chrono::system_clock::now().time_since_epoch().count();
-		shuffle(colors.begin(), colors.end(), default_random_engine(seed));
+			if (l->GetIndex() > 0) continue;
 
-		for (int i = 0; i < (int)detections.size(); i++) {
-			DetectionResult& dr = detections[i];
-			const string& name = classes[dr.class_id];
-			l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
-			r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
-			t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
-			b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
-			cv::Point ptTopLeft(l, t), ptBottomRight(r, b);
-			
-			
-			cv::rectangle(mat, ptTopLeft, ptBottomRight, colors.at(i), 1);
-			cv::rectangle(overlay, ptTopLeft, ptBottomRight, colors.at(i), -1);
-			
-			char conf_text[20];
-			if (dr.confidence == 1.0f)
-				strcpy(conf_text, "100%");
-			else {
-				sprintf(conf_text, "%.2f%%", dr.confidence * 100.0f);
-			}
-			int baseline = 0;
-			cv::Size size = cv::getTextSize( conf_text, cv::QT_FONT_NORMAL, 1.0, 2, &baseline);
-			ptTopLeft.y = ((t + b) >> 1) + (size.height >> 1);
-			ptTopLeft.x = ((l + r) >> 1) - (size.width >> 1);
-			cv::putText(mat, conf_text, ptTopLeft, cv::QT_FONT_NORMAL, 1.0, colors.at(i), 1);
-			//
-			//
-			cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] " << conf_text << endl;
-		} 
-		vector<int> params;
-		params.push_back(cv::IMWRITE_JPEG_QUALITY);
-		params.push_back(90);
-		cv::addWeighted(mat, 1.0, overlay, 0.3, 0, mat);
-		sprintf_s(output_path, MAX_PATH, "predictions@%.2f/%s", GetAppConfig().ThreshHold(), file_part(it));
+			InferenceModule* lastModule = l->modules.at(l->modules.size() - 1);
  
-		cv::imwrite(output_path, mat, params);
+
+			CudaTensor& o = lastModule->GetOutput(-1);
+			if (o.Elements() == 0) continue;
+
+			if (o.Elements2D() < 64) continue;
+
+			cv::Mat featuremap = cv::Mat::zeros(o.Height(), o.Width(), CV_8UC1);
+
+			char dir[MAX_PATH], path[MAX_PATH];
+			_splitpath(filename, NULL, NULL, path, NULL);
+			sprintf_s(dir, MAX_PATH, "featuremaps/%s.%s", path, l->GetName().c_str());
+			make_sure_dir_exists(dir);
+
+
+			CpuPtr<float> buffer(o.Elements2D());
+
+			for (int c = o.Channel() - 1; c >= 0; c--) {
+				o.Pull(buffer.ptr, c * o.Elements2D(), buffer.Length());
+
+				for (int i = 0; i < buffer.Length(); i++) {
+					float f = buffer.ptr[i];
+					if (f > 0 && f <= 1.0f) {
+						featuremap.data[i] = (unsigned char)roundf(f * 255.0f); 
+					}
+					else {
+						featuremap.data[i] = 0;
+						buffer[i] = 0;
+					}
+				}
+				
+ 
+				cv::Mat full_size_fm, temp2;
+				cv::resize(featuremap, full_size_fm, mat.size());
+
+				/*if (c == 26) {
+					sprintf_s(path, MAX_PATH, "%s/channels-%04d.dat", dir, c);
+					ofstream of(path, ios_base::binary | ios_base::trunc);
+					of.write((char*)full_size_fm.data, full_size_fm.rows * full_size_fm.cols);
+				}(*/
+
+#if 0
+				cv::applyColorMap(full_size_fm, temp2, cv::COLORMAP_JET);
+				sprintf_s(path, MAX_PATH, "%s/channels-%04d.jpg", dir, c);
+				
+				cv::Mat temp3; 
+				cv::addWeighted(mat, 0.6, temp2, 0.6, 0, temp3);
+
+				cv::imwrite(path, temp3);
+#endif
+			}
+		}
+		cout << "  -> " <<  filename << ": " << classes[classfied_result.first] << "(" << classfied_result.first << ") , confidence: "
+			<< fixed << setprecision(2) << classfied_result.second * 100.0f << "%.\n";
+		
 	}
 
+	cout << "\n INFO: Done!\n";
+
+	return true;
+}
+bool CNNNetwork::Detect(const char* path) {
+	if (input_channels <= 0 || input_width <= 0 || input_height <= 0 || !path)
+		return false;
+
+	//2021.10.16, add video 
+
+	for (auto l : layers) {
+		if (!l->FuseBatchNormModule()) {
+			cerr << " FuseBatch error @ " << l->GetName() << "! \n\n";
+			return false;
+		}
+	}
+	Size szInput(input_width, input_height);
+	Mat resized = Mat::zeros(szInput, CV_8UC3);
+	char output_path[MAX_PATH];
+	if (is_suffix(path, ".avi") || is_suffix(path, ".mov") || is_suffix(path, ".mp4") ) {
+		VideoCapture cap;
+		if(!cap.open(path)) return false;
+		Mat frame;
+		cap >> frame;
+		if (!cap.grab()) {
+			cerr << "This demo supports only video (or camera) inputs !!! "
+				"Failed to get next frame from the " << path << endl;
+			return false;
+		}
+		int fps = (int)cap.get(CAP_PROP_FPS);
+		int cur_frame_index = 0;
+		int orig_elements = frame.cols * frame.rows;
+		
+		if (input) delete[]input;
+		CpuPtr<float> buffer(input_channels * input_width * input_height);
+		input = buffer.ptr;
+		_splitpath_s(path, nullptr, 0, nullptr, 0, output_path, MAX_PATH, nullptr, 0);
+		sprintf_s(output_path, MAX_PATH, "%s-data" , output_path);
+		make_sure_dir_exists(output_path);
+
+		while (!frame.empty()) {			
+			resize(frame, resized, szInput);
+			input_channels = resized.channels();
+			int index = 0;
+			for (size_t c = 0; c < input_channels; c++) {
+				for (size_t h = 0, i= 0; h < input_height; h++) {
+					for (size_t w = 0; w < input_width; w++, i++) {
+						input[index++] = (float)resized.at<Vec3b>(i)[c] / 255.0f;
+					}
+				}
+			}
+			ForwardContext context = { false, false, false, nullptr };
+			detections.clear();
+
+			Mat featuremap = Mat::zeros(frame.size(), CV_8UC1);
+			
+			for (auto l : layers) {
+				if (!l->Forward(context)) {
+					cerr << " Error: Forward failed in  " << l->GetName() << ", frame index : "<< cur_frame_index <<"!\n";
+					input = nullptr;
+					return false;
+				}
+				if (l->GetName() != "stage3-s1-5") continue;
+				InferenceModule* lastModule = l->modules.at(l->modules.size() - 1);
+				CudaTensor& o = lastModule->GetOutput(-1);
+				CpuPtr<float> buffer(o.Elements2D());
+				o.Pull(buffer.ptr, 72 * o.Elements2D(), buffer.Length());
+				float max_val = 0.0f;
+				Mat temp = Mat::zeros(Size(o.Height(),o.Width()), CV_8UC1);
+				for (int i = 0; i < buffer.Length(); i++) {
+					float f = buffer.ptr[i];
+					if (f < 0)
+						buffer.ptr[i] = 0;
+					else if (f > max_val) {
+						max_val = f;
+					}
+				}
+				if (max_val > 0.0f) {
+					max_val = 255.0f / max_val;
+					for (int i = 0; i < buffer.Length(); i++) {
+						float f = buffer.ptr[i];
+						if (f != 0) {
+							unsigned char w = (unsigned char)roundf(f * max_val);
+							temp.data[i] = w;
+						}
+					}
+				}
+				resize(temp, featuremap, featuremap.size());
+				 
+			}
+			//Êä³ö
+			int cnt = 0;
+			for (const auto& d : detections) {
+
+				float lv = d.x - 0.5f * d.w;
+				float rv = d.x + 0.5f * d.w;
+				float tv = d.y - 0.5f * d.h;
+				float bv = d.y + 0.5f * d.h;
+
+				if (lv < 0) lv = 0;
+				if (tv < 0) tv = 0;
+				if (rv > 1) rv = 1;
+				if (bv > 1) bv = 1;
+
+				Rect rc((int)(lv * frame.cols), (int)(tv * frame.rows), 
+					(int)((rv - lv) * frame.cols), (int)((bv - tv) * frame.rows));
+		 
+
+				Mat crop = frame(rc);
+				Mat hm = featuremap(rc);
+				char fname[MAX_PATH];
+				sprintf_s(fname, MAX_PATH, "%s\\frm-%04d-%03d.jpg", output_path, cur_frame_index, cnt);
+				cv::imwrite(fname, crop);
+				sprintf_s(fname, MAX_PATH, "%s\\frm-%04d-%03d.fm.jpg", output_path, cur_frame_index, cnt++);
+				cv::imwrite(fname, hm);
+			}
+
+#if 0
+			char fname[MAX_PATH];
+			sprintf_s(fname, "%s\\frame-%05d.jpg", output_path, cur_frame_index);
+			imwrite(fname, frame); 
+
+			sprintf_s(fname, "%s\\frame-%05d.txt", output_path, cur_frame_index);
+			
+			ofstream of(fname, ios_base::trunc);
+			char line[500];
+			if (of.is_open()) {
+				for (const auto& d : detections) {
+					sprintf_s(line, 500, "%d %.6f %.6f %.6f %.6f\n", d.class_id, d.x, d.y, d.w, d.h);
+					of << line;
+				}
+				of.close();
+			}
+#endif
+			cur_frame_index += fps;
+			if (!cap.set(CAP_PROP_POS_FRAMES, cur_frame_index)) break; 
+			cap >> frame;
+		}
+		input = nullptr;
+	}
+	else {
+		vector<string> files;
+		struct stat s = { 0 };
+		string folder(path);
+		stat(path, &s);
+		if (s.st_mode & _S_IFDIR) {
+			char c = path[folder.length() - 1];
+			if (c != '/' && c != '\\')
+				folder += SPLIT_CHAR;
+			string search_str = folder + "*.*";
+			_finddata_t find_data;
+			intptr_t handle = _findfirst(search_str.c_str(), &find_data);
+			if (handle == -1) {
+				cerr << "Error: Failed to find first file under `" << folder.c_str() << "`!\n";
+				return false;
+			}
+			bool cont = true;
+
+			while (cont) {
+				if (0 == (find_data.attrib & _A_SUBDIR)) {
+					if (is_suffix(find_data.name, ".jpg") ||
+						is_suffix(find_data.name, ".png") ||
+						is_suffix(find_data.name, ".jfif") ||
+						is_suffix(find_data.name, ".bmp")) {
+						files.push_back(folder + find_data.name);
+					}
+				}
+				cont = (_findnext(handle, &find_data) == 0);
+			}
+			_findclose(handle);
+
+		}
+		else
+			files.push_back(path);
+
+		
+		sprintf_s(output_path, MAX_PATH, "predictions@%.2f", GetAppConfig().ThreshHold());
+		make_sure_dir_exists(output_path);
+		
+		for (auto it : files) {
+			const char* filename = it.c_str();
+			cout << " Processing " << filename << " ...\n";
+			cv::Mat mat = cv::imread(filename);
+			if (mat.empty()) {
+				cerr << "\nError: Cannot load image `" << filename << "`!\n";
+				return false;
+			}
+			if (input) delete[]input;
+			int orig_elements = mat.cols * mat.rows;
+			cv::Size sz(input_width, input_height);
+			cv::Mat temp = cv::Mat::zeros(sz, CV_8UC3);
+			resize(mat, temp, sz);
+
+
+			input_channels = temp.channels();
+			CpuPtr<float> buffer(input_channels * input_width * input_height);
+			input = buffer.ptr;
+			int index = 0;
+			for (size_t c = 0; c < input_channels; c++) {
+				for (size_t h = 0; h < input_height; h++) {
+					for (size_t w = 0; w < input_width; w++) {
+						input[index++] = (float)temp.at<cv::Vec3b>(h, w)[c] / 255.0f;
+					}
+				}
+			}
+			if (GetAppConfig().tracing) {
+				make_sure_dir_exists("featuremaps");
+			}
+			ForwardContext context = { false, false, false, nullptr };
+			detections.clear();
+			for (auto l : layers) {
+				if (!l->Forward(context)) {
+
+					cerr << " Error: Forward failed in  " << l->GetName() << "!\n";
+					input = nullptr;
+					return false;
+				}
+
+
+				if (!GetAppConfig().tracing || l->modules.size() == 0) continue;
+				if (l->GetName() != "stage3-s1-5") continue;
+
+				InferenceModule* lastModule = l->modules.at(l->modules.size() - 1);
+
+
+				CudaTensor& o = lastModule->GetOutput(-1);
+				if (o.Elements() == 0) continue;
+
+				if (o.Elements2D() < 64) continue;
+
+				cv::Mat featuremap = cv::Mat::zeros(o.Height(), o.Width(), CV_8UC1);
+				cv::Mat masked = cv::Mat::zeros(o.Height(), o.Width(), CV_8UC3);
+				char dir[MAX_PATH], fname[MAX_PATH], filepart[MAX_PATH]; 
+
+				_splitpath(filename, NULL, NULL, filepart, NULL);
+				sprintf_s(dir, MAX_PATH, "featuremaps/%s.%s", filepart, l->GetName().c_str());
+				make_sure_dir_exists(dir);
+
+
+				CpuPtr<float> buffer(o.Elements2D()); 
+				o.Pull(buffer.ptr, 72 * o.Elements2D(), buffer.Length());
+				float max_val = 0.0f;
+				for (int i = 0; i < buffer.Length(); i++) {
+					float f = buffer.ptr[i];
+					if (f < 0)
+						buffer.ptr[i] = 0;
+					else if (f > max_val) {
+						max_val = f;
+					}
+				}
+				if (max_val > 0.0f) {
+					max_val = 255.0f / max_val;
+					for (int i = 0; i < buffer.Length(); i++) {
+						float f = buffer.ptr[i];
+						if (f == 0.0f) {
+							featuremap.data[i] = 0;
+							masked.at<Vec3b>(i) = { 0,0,0 };
+						}
+						else {
+							unsigned char w = (unsigned char)roundf(f * max_val);
+							featuremap.data[i] = w;
+							if (w > 20) {
+								masked.at<Vec3b>(i) = { 255,255,255 };
+							}
+							else
+								masked.at<Vec3b>(i) = { 128,128,128 };
+						}
+					}
+					cv::Mat full_size_fm, temp2;
+					cv::resize(featuremap, full_size_fm, mat.size());
+					cv::applyColorMap(full_size_fm, temp2, cv::COLORMAP_JET);
+					
+					sprintf_s(fname, MAX_PATH, "featuremaps/%s-heatmap.jpg", filepart);
+					cv::Mat temp3;
+					try {
+						cv::addWeighted(mat, 0.6, temp2, 0.6, 0, temp3);
+						cv::imwrite(fname, temp3);
+
+						sprintf_s(fname, MAX_PATH, "featuremaps/%s-masked.jpg",  filepart);
+						cv::resize(masked , temp2, mat.size());
+						//cv::addWeighted(mat, 0.6, temp2, 0.6, 0, temp3);
+						cv::imwrite(fname, temp2);
+					}
+					catch (...) {
+						cerr << "err!\n";
+					}
+				}
+
+
+#if 0
+				for (int c = o.Channel() - 1; c >= 0; c--) {
+					o.Pull(buffer.ptr, c * o.Elements2D(), buffer.Length()); 
+			 
+					float max_val = 0.0f;
+					for (int i = 0; i < buffer.Length(); i++) {
+						float f = buffer.ptr[i];
+						if (f < 0)
+							buffer.ptr[i] = 0;
+						else if (f > max_val) {
+							max_val = f;
+						}
+					}
+					if (max_val > 0.0f) {
+						max_val = 255.0f / max_val;
+						for (int i = 0; i < buffer.Length(); i++) {
+							float f = buffer.ptr[i];
+							if (f == 0.0f)
+								featuremap.data[i] = 0;
+							else { 
+								featuremap.data[i] =   (unsigned char)roundf(f * max_val);
+							}
+						}
+						cv::Mat full_size_fm, temp2;
+						cv::resize(featuremap, full_size_fm, mat.size());
+						cv::applyColorMap(full_size_fm, temp2, cv::COLORMAP_JET);
+						sprintf_s(fname, MAX_PATH, "%s/channels-%04d.jpg", dir, c);
+						cv::Mat temp3;
+						try {
+							cv::addWeighted(mat, 0.6, temp2, 0.6, 0, temp3);
+							cv::imwrite(fname, temp3);
+						}
+						catch (...) {
+							cerr << "err!\n";
+						}
+					}
+				}
+#endif
+			}
+
+			input = nullptr;
+
+			int l, r, t, b;
+			cv::Mat overlay = cv::Mat::zeros(mat.size(), CV_8UC3);
+
+			uchar rgb[3];
+			vector<cv::Scalar> colors;
+			for (int i = 0; i < (int)detections.size(); i++) {
+				hsl2rgb(0.6 + (i + 1.0f) / detections.size() * 0.4, 1.0, 0.5, rgb);
+				cv::Scalar color(rgb[0], rgb[1], rgb[2]);
+				colors.push_back(color);
+			}
+			unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+			shuffle(colors.begin(), colors.end(), default_random_engine(seed));
+
+			for (int i = 0; i < (int)detections.size(); i++) {
+				DetectionResult& dr = detections[i];
+				const string& name = classes[dr.class_id];
+				l = (int)((dr.x - dr.w * 0.5f) * mat.cols);
+				r = (int)((dr.x + dr.w * 0.5f) * mat.cols);
+				t = (int)((dr.y - dr.h * 0.5f) * mat.rows);
+				b = (int)((dr.y + dr.h * 0.5f) * mat.rows);
+				cv::Point ptTopLeft(l, t), ptBottomRight(r, b);
+				cv::rectangle(mat, ptTopLeft, ptBottomRight, colors.at(i), 1);
+				//cv::rectangle(overlay, ptTopLeft, ptBottomRight, colors.at(i), -1);
+
+				char conf_text[20];
+				if (dr.confidence == 1.0f)
+					strcpy(conf_text, "100%");
+				else {
+					sprintf(conf_text, "%.2f%%", dr.confidence * 100.0f);
+				}
+				int baseline = 0;
+				cv::Size size = cv::getTextSize(conf_text, cv::QT_FONT_NORMAL, 1.0, 2, &baseline);
+				ptTopLeft.y = ((t + b) >> 1) + (size.height >> 1);
+				ptTopLeft.x = ((l + r) >> 1) - (size.width >> 1);
+				//cv::putText(mat, conf_text, ptTopLeft, cv::QT_FONT_NORMAL, 1.0, colors.at(i), 1);
+				//
+				//
+				cout << name << " at [" << l << ", " << r << ", " << t << ", " << b << " ] " << conf_text << endl;
+			}
+			vector<int> params;
+			params.push_back(cv::IMWRITE_JPEG_QUALITY);
+			params.push_back(90);
+			cv::addWeighted(mat, 1.0, overlay, 0.3, 0, mat);
+			sprintf_s(output_path, MAX_PATH, "predictions@%.2f/%s", GetAppConfig().ThreshHold(), file_part(it));
+
+			cv::imwrite(output_path, mat, params);
+		}
+	}
 	cout << " INFO: output written to predictions/!\n";
 	
 	return true;

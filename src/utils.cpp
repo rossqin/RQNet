@@ -190,7 +190,7 @@ bool is_suffix(const char* filename, const char* ext) {
 	size_t l2 = strlen(ext);
 	if (l1 < l2) return false;
 	const char* s = filename + (l1 - l2);
-	return 0 == strcmp(s, ext);
+	return 0 == _stricmp(s, ext);
 }
 void dump_mem(float* data, int n) {
 	for (int i = 0; i < n; i++) {

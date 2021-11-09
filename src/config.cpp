@@ -136,6 +136,8 @@ AppConfig::AppConfig() {
 
 	use_ciou_loss = true;
 	adversarial = false;
+
+	tracing = false;
 }
 
 AppConfig::~AppConfig() {
@@ -149,7 +151,12 @@ bool AppConfig::Load(const char * filename, int mode) {
 
 
 	tinyxml2::XMLDocument doc;
-	if (XML_SUCCESS != doc.LoadFile(filename)) return false;
+	int err = doc.LoadFile(filename);
+	if (XML_SUCCESS != err) {
+
+		cerr  << doc.ErrorStr()   ;
+		return false;
+	}
 
 	XMLElement* root = doc.RootElement();
 	if (!root) return false; 
@@ -292,25 +299,82 @@ Dataset::Dataset(const XMLElement * element) {
 			if (0 == (find_data.attrib & _A_SUBDIR)) {
 				if (is_suffix(find_data.name, ".jpg") ||
 					is_suffix(find_data.name, ".JPG") ||
+					is_suffix(find_data.name, ".jfif") ||
+					is_suffix(find_data.name, ".JFIF") ||
 					is_suffix(find_data.name, ".png") ||
 					is_suffix(find_data.name, ".PNG") ||
 					is_suffix(find_data.name, ".bmp")||
 					is_suffix(find_data.name, ".BMP")
 					) { 
-					filenames.push_back(str + find_data.name);
+					filenames.push_back({ str + find_data.name, -1 });
 				}
 			}
 			cont = (_findnext(handle, &find_data) == 0);
 		}
 		_findclose(handle);
-	}
-	str += "classes.txt";
-	ifstream clsfile(str);
-	if (clsfile.is_open()) {
-		while (getline(clsfile, str)) {
-			classes.push_back(str);
+		str += "classes.txt";
+		ifstream clsfile(str);
+		if (clsfile.is_open()) {
+			while (getline(clsfile, str)) {
+				classes.push_back(str);
+			}
+			clsfile.close();
 		}
-		clsfile.close();
 	}
+	else if (str == "classfication") {
+		if (XML_SUCCESS != element->QueryText("path", str))  return;
+
+		if (str.find_last_of('/') != str.length() &&
+			str.find_last_of('\\') != str.length())
+			str += SPLIT_CHAR;
+		string filename = str + "classes.txt";
+		ifstream clsfile(filename);
+
+		if (clsfile.is_open()) {
+			string line;
+			
+			while (getline(clsfile, line)) { 
+				vector<string> triplet;
+				split_string(triplet, line, ':');
+				int cls_id = -1;
+				if (triplet.size() == 3) {
+					cls_id = atoi(triplet[2].c_str());
+				}
+				else {
+					cerr << "Error : " << line << endl;
+				}
+				string dir = str + triplet[0] + SPLIT_CHAR;
+				string search_path = dir  + "*.*";
+				_finddata_t find_data;
+				intptr_t handle = _findfirst(search_path.c_str(), &find_data);
+				if (handle == -1) {
+					cerr << "Error: Failed to find first file under `" << str.c_str() << "`!\n";
+					return;
+				}
+				bool cont = true;
+
+				while (cont) {
+					if (0 == (find_data.attrib & _A_SUBDIR)) {
+						if (is_suffix(find_data.name, ".jpg") ||
+							is_suffix(find_data.name, ".JPG") ||
+							is_suffix(find_data.name, ".jfif") ||
+							is_suffix(find_data.name, ".JFIF") ||
+							is_suffix(find_data.name, ".png") ||
+							is_suffix(find_data.name, ".PNG") ||
+							is_suffix(find_data.name, ".bmp") ||
+							is_suffix(find_data.name, ".BMP")
+							) {
+							filenames.push_back({ dir + find_data.name, cls_id });
+						}
+					}
+					cont = (_findnext(handle, &find_data) == 0);
+				}
+				_findclose(handle);
+				
+			}
+			clsfile.close();
+		}
+	}
+	
 
 }

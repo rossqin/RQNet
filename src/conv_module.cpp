@@ -442,12 +442,13 @@ bool prune_params(CudaTensor& params, const vector<bool>& v, bool input) {
 	return ret;
 }
 bool ConvolutionalModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
-	
+
 	InferenceModule::CheckRedundantChannels(c_threshold, w_threshold);
-	valid_in_channels = valid_channels;
+	valid_in_channels = valid_channels;	
 	if (groups != input_channels) {
 		valid_channels.assign(output_channels, true);
-	} 
+	}
+	if (name == "stage4-s2.conv1-1") return true;
 	int prune_c = 0;
 	CpuPtr<float> buffer(w.Elements());
 	float* p = buffer.ptr;
@@ -469,11 +470,22 @@ bool ConvolutionalModule::CheckRedundantChannels(float c_threshold, float w_thre
 		}
 	}
 	if (change_prev) {
-		if (prevs.size() == 1 && prevs[0].group_id == -1)
-			prevs[0].module->valid_channels = valid_in_channels;
+		if (prevs.size() == 1 && prevs[0].group_id == -1) {
+			InferenceModule* im = prevs[0].module;
+			while (im) {
+				int g = -1; 
+				im->valid_channels = valid_channels;
+				ConvolutionalModule* cm = dynamic_cast<ConvolutionalModule*>(im);
+				if (cm) break;
+				im = im->GetPrev(0, g, false);
+				cm = dynamic_cast<ConvolutionalModule*>(im);
+				if (!cm && im->PrevCount() > 1) break;
+			}
+		}
 		else {
 			cout << " Hint: Prunning for " << name << " may not be correct! \n";
 		}
+		 
 	}
 	if (0 == prune_c) return true; // no extra redundancy
 	prune_c = 0;
@@ -485,6 +497,7 @@ bool ConvolutionalModule::CheckRedundantChannels(float c_threshold, float w_thre
 }
 //TODO: input_channels != groups && groups != 1
 bool ConvolutionalModule::Prune() {
+
 	if (input_channels == groups) { //dwconv 
 		for (int i = 0; i < input_channels; i++) {
 			if (valid_channels[i] != valid_in_channels[i]) { 
@@ -493,7 +506,6 @@ bool ConvolutionalModule::Prune() {
 				break;
 			}
 		}
-
 	}
 	int new_ic = 0, new_oc = 0;
 	for (int i = 0; i < input_channels; i++) {

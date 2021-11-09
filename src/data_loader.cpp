@@ -5,7 +5,7 @@
 #include <thread>
 #include <memory>
 #include <array>
-#define _USE_MULTI_THREAD_ 1
+//#define _USE_MULTI_THREAD_ 1
 int post_load_rot[16] = { 3,4,1,5,0,1,0,1,3,1,4,0,3,4,4,1 };
 int rot_index = 0;
 int mini_batch_rotate = 0;
@@ -324,6 +324,7 @@ struct ImageLoadThreadParams{
 	const char* filename;
 	Image* image;
 	int channels;
+	int cls_id; // for classifier
 	bool succ;
 };
 static void load_image_in_thread(ImageLoadThreadParams* p) {
@@ -348,19 +349,19 @@ bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int chan
 	info.image_size = image_size;
 #ifdef _USE_MULTI_THREAD_
 	vector<thread*> threads; 
-#endif 
+#endif  
 	for (int i = 0, index = start_index; i < mini_batch; i++, index++) {
 		if (index >= ds->GetSize()) {
-			filename = ds->FilenameAt(random_gen() % ds->GetSize()).c_str();
+			index = random_gen() % ds->GetSize();
+			filename = ds->FilenameAt(index).c_str();
 		}
 		else
-			filename = ds->FilenameAt(index).c_str();
-
+			filename = ds->FilenameAt(index).c_str(); 
 		if (records) {
 			records->push_back(filename);
 		}
 		ImageLoadThreadParams* p = New ImageLoadThreadParams();
-		*p = { filename, nullptr, channels , false };
+		*p = { filename, nullptr, channels , ds->FileClassAt(index), false };
 		params.push_back(p);
 #ifdef _USE_MULTI_THREAD_ 
 		threads.push_back(New thread(load_image_in_thread, p));
@@ -399,6 +400,7 @@ bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int chan
 			return false;
 		}
 #endif
+		
 		info.truths = truth_data[i];
 		if (!ImagePostLoad(*image, info)) {
 			succ = false;
@@ -413,14 +415,18 @@ bool DataLoader::MiniBatchLoad(float* input, LPObjectInfos* truth_data, int chan
 			continue;
 		} 
 		memcpy(input, image->GetData(), image_size * sizeof(float));
-		input += image_size;
-		 
-		string label_path(params[i]->filename);
-
-		if (!LoadImageLabel(replace_extension(label_path, ".txt"), info)) {
-			cerr << "Error: Reading `" << label_path << "` failed! \n";
-			succ = false;
-			continue;
+		input += image_size;  
+		if (params[i]->cls_id == -1) { // Release 版本调试发现params size == 25, i == 25
+			string label_path(params[i]->filename);
+			if (!LoadImageLabel(replace_extension(label_path, ".txt"), info)) {
+				cerr << "Error: Reading `" << label_path << "` failed! \n";
+				succ = false;
+				continue;
+			}
+		}
+		else {
+			truth_data[i]->clear();
+			truth_data[i]->push_back({ 0,0,0,0,(float)params[i]->cls_id });
 		}
 		delete image;
 		delete params[i];

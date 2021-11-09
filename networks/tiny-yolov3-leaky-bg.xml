@@ -11,7 +11,6 @@
 		<class>areca</class>		
 	</classes> 
 	<anchors style="yolo">
-		
 		<anchor width="10" height="14" />
 		<anchor width="27" height="23" />
 		<anchor width="37" height="58" />
@@ -90,7 +89,7 @@
 			<module id="yolo" type="yolo-detection" anchor-masks="3,4,5"  class-normalizer="1.0" iou-normalizer="2.0" object-normalizer="1.0" bg-normalizer="0.05"/>
 		</layer>
 		<layer id="layer18">
-			<module type="conv" id="convolution" filters="128" size="1" />
+			<module type="conv" id="convolution" filters="128" size="1" before="layer14.last"/>
 			<module id="normalization" type="batch-norm" />
 			<module id="activation" type="activation" />
 		</layer>

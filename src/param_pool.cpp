@@ -59,6 +59,7 @@ bool ParamPool::Load(const char * filename) {
 						f[i] = 0.0f;
 				}
 			}
+			
 			if (!it->second->Push(buf, data_header)) {
 				cerr << " INFO: Parameter `" << name << "` loaded but not set. Ignore.\n";
 			}

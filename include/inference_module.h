@@ -64,12 +64,13 @@ public:
 	virtual int OutputCount() const { return 1; }
 	virtual bool CheckRedundantChannels(float c_threshold, float w_threshold);
 	virtual bool Prune() { return true; }
+	virtual void SyncValidChannels(vector<bool>& vc, int s, int n, int g = -1);
 
 	InferenceModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
 	inline const char* Precision() const { return (output.DataType() == CUDNN_DATA_FLOAT) ? "FP32" : "FP16"; }
 	inline int GetOutputChannels() const { return output_channels; } 
 	inline const string& Name() const { return name; }
-
+	inline int PrevCount() const { return prevs.size();  }
 	static InferenceModule* FromXmlElement(const XMLElement* element, Layer* layer, CNNNetwork* network, InferenceModule* prev);
 
 	//bool PrepareShortcutDelta();
@@ -115,6 +116,7 @@ protected:
 	bool Resize(int w_, int h);
 	friend class BatchNormModule;
 	friend class CNNNetwork;
+	friend class InferenceModule;
 public :
 	~ConvolutionalModule();
 	ConvolutionalModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
@@ -251,10 +253,12 @@ public:
 	bool Resize(int w, int h);
 	bool Forward(ForwardContext& context); 
 	bool Backward(CudaTensor& delta);
-	CudaTensor& GetOutput(int gid) { return outputs[gid]; }
+	CudaTensor& GetOutput(int gid) { if (gid < 0 || gid >= outputs.size()) return *forward_input; return outputs[gid]; }  
 	CudaTensor& GetShortcutDelta(int gid) { return deltas[gid]; }
 	bool ShortcutDelta(const CudaTensor& d, int group_id);
 	int OutputCount() const { return groups; }
+	bool CheckRedundantChannels(float c_threshold, float w_threshold);
+	void SyncValidChannels(vector<bool>& vc, int s, int n, int g );
 };
 
 class ShuffleModule :public InferenceModule {
@@ -267,4 +271,13 @@ public:
 	bool Forward(ForwardContext& context);
 	bool Backward(CudaTensor& delta);
 
+};
+class ClassifierModule : public InferenceModule {
+protected:
+public:
+	ClassifierModule(const XMLElement* element, Layer* l, CNNNetwork* net, InferenceModule* prev);
+	uint32_t GetFlops() const { return 0; }
+	bool Resize(int w, int h) { return true; }
+	bool Forward(ForwardContext& context);
+	bool Backward(CudaTensor& delta);
 };

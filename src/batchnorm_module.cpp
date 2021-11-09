@@ -203,14 +203,16 @@ bool BatchNormModule::Fuse() {
 
 
 bool BatchNormModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
-	if (prevs.size() != 1 || prevs[0].group_id != -1) return false; 
-
-	ConvolutionalModule* module = dynamic_cast<ConvolutionalModule*>(prevs[0].module);
-	if (!module) return false; 
-	valid_channels = module->valid_channels;
+	if (prevs.size() != 1 || prevs[0].group_id != -1) return false;  
+ 
+	ConvolutionalModule* m = dynamic_cast<ConvolutionalModule*>(prevs[0].module);
+	if (!m) return false; 
+	valid_channels = m->valid_channels;
+	// very special
+	if (name == "stage1-s2.norm1-1" || name  == "stage4-s2.norm1-1") return true;
 	int prune_c = 0;
-	CpuPtr<float> buffer(output_channels);
-	params.Pull(buffer.ptr, output_channels, output_channels);
+	CpuPtr<float> buffer(output_channels );
+	params.Pull(buffer.ptr, output_channels, output_channels );
 	for (int i = 0; i < output_channels; i++) {
 		if (!valid_channels[i]) continue;
 		if (fabs(buffer.ptr[i]) < c_threshold) {
@@ -222,10 +224,26 @@ bool BatchNormModule::CheckRedundantChannels(float c_threshold, float w_threshol
 	if (prune_c == 0) return true; 
 	prune_c = 0;
 	for (int i = 0; i < output_channels; i++) {
-		module->valid_channels[i] = valid_channels[i];
-		if (!valid_channels[i]) prune_c++; 
+		m->valid_channels[i] = valid_channels[i];
+		if (!valid_channels[i]) prune_c++;
 	}
-	cout << " Redundant Channels in " << module->Name() << " : " << prune_c << ".\n\n";
+	if (m->groups == m->input_channels && m->w.Elements2D() > 1) {
+		InferenceModule* im = m;
+		m->valid_in_channels = valid_channels;
+		while (im->PrevCount() == 1) {
+			int g = -1;
+			im = im->GetPrev(0, g, false); 
+			im->valid_channels = valid_channels;
+			ConvolutionalModule* cm = dynamic_cast<ConvolutionalModule*>(im);
+
+			if (cm) {
+				cm->valid_channels = valid_channels;
+				break;
+			}
+		}
+
+	}
+	cout << " Redundant Channels in " << m->Name() << " : " << prune_c << ".\n\n";
 	return true;
 }
 bool BatchNormModule::Prune() { 

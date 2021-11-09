@@ -279,11 +279,11 @@
 		</layer> 
 		<layer id="neck1"		desc="output: 13*13*384" >
 			<!--1x1+leaky-->
-			<module id="conv1x1" type="conv"  filters="212" />			
+			<module id="conv1x1" type="conv"  filters="211" />			
 			<module id="norm1" type="batch-norm"  />
 			<module id="leaky.1" type="activation" />
 			<!--3x3dw+leaky-->
-			<module id="conv3x3dw" type="dwconv"  filters="212" size="3" />
+			<module id="conv3x3dw" type="dwconv"  filters="211" size="3" />
 			<module id="norm2" type="batch-norm"  />
 			<module id="leaky.2" type="activation" />
 			<!--1x1-->
@@ -293,7 +293,7 @@
 		</layer>
 		<layer id="detection.big" >
 			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true"/>
-			<module id="yolo"		type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="0.5" object-normalizer="10.0" bg-normalizer="0.05"/>
+			<module id="yolo"		type="yolo-detection" anchor-masks="3,4,5" class-normalizer="1.0" iou-normalizer="2.0" object-normalizer="10" bg-normalizer="0.05"/>
 		</layer>
 		<layer id="merge"		desc="output:26*26*256" >
 			<module id="conv1"		type="conv"  filters="128" size="1" before="stage4-s1-3.last" />
@@ -305,11 +305,11 @@
 		</layer>
 		<layer id="neck2"		desc="output: 26*26*256" >
 			<!--1x1+leaky-->
-			<module id="conv1x1" type="conv"  filters="268" />			
+			<module id="conv1x1" type="conv"  filters="238" />			
 			<module id="norm1" type="batch-norm"  />
 			<module id="leaky.1" type="activation" />
 			<!--3x3dw+leaky-->
-			<module id="conv3x3dw" type="dwconv"  filters="268" size="3" />
+			<module id="conv3x3dw" type="dwconv"  filters="238" size="3" />
 			<module id="norm2" type="batch-norm"  />
 			<module id="leaky.2" type="activation" />
 			<!--1x1-->
@@ -319,7 +319,7 @@
 		</layer>
 		<layer id="detection.small" >
 			<module id="conv1"		type="conv"  filters="15" size="1"  bias="true" />
-			<module id="yolo"		type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="2.0" iou-normalizer="1.0" object-normalizer="20.0"  bg-normalizer="0.1"/>
+			<module id="yolo"		type="yolo-detection" anchor-masks="0,1,2"  class-normalizer="2.0" iou-normalizer="8.0" object-normalizer="20"  bg-normalizer="0.1"/>
 		</layer>
 		
 	</layers>

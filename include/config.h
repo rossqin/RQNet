@@ -1,16 +1,17 @@
 #pragma once
 #include "tinyxml2.h"
-using namespace tinyxml2; 
+using namespace tinyxml2;  
 
 class Dataset {
 	string name;
-	mutable vector<string> filenames;
+	mutable vector<pair<string,int> > filenames;
 	vector<string> classes;
 public:
 	Dataset(const XMLElement* element);
 	~Dataset() {}
 	inline size_t GetSize() const { return filenames.size(); }
-	inline const string& FilenameAt(size_t i) const { return filenames[i]; }
+	inline const string& FilenameAt(size_t i) const { return filenames[i].first; }
+	inline int FileClassAt(size_t i) const { return filenames[i].second; }
 	inline const string& GetName() const { return name; }
 	void ShuffleFiles() const ;
 };
@@ -97,7 +98,7 @@ protected:
 	//return dataset name
 	const char* LoadTrainingSection(XMLElement* root); 
 public :
-	
+	bool tracing;
 	AppConfig();
 	~AppConfig();
 	// mode 

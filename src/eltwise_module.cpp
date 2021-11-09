@@ -139,7 +139,7 @@ bool EltwiseModule::Backward(CudaTensor& delta) {
 uint32_t EltwiseModule::GetFlops() const {
 	return input_channels * output_channels * output_height * output_width;
 }
-
+ 
 bool EltwiseModule::CheckRedundantChannels(float c_threshold, float w_threshold) { 
 	bool pruned = false;
 	vector<string> names; 
@@ -148,13 +148,23 @@ bool EltwiseModule::CheckRedundantChannels(float c_threshold, float w_threshold)
 		InferenceModule* m = prevs[i].module;
 		for (int j = 0; j < output_channels; j++) {
 			if (m->valid_channels[j] != valid_channels[j]) {
-				m->valid_channels[j] = false;
+				//m->valid_channels[j] = false;
 				valid_channels[j] = false;
 				pruned = true;
 			}
 		}
 	}
 	if (pruned) {
+		for (int i = 0; i < prevs.size(); i++) {
+			InferenceModule* m = prevs[i].module;
+			while (m->PrevCount() == 1) {
+				int g = -1;
+				m = m->GetPrev(0, g, false);
+				m->valid_channels = valid_channels;
+				ConvolutionalModule* cm = dynamic_cast<ConvolutionalModule*>(m);
+				if (cm) break;
+			}
+		}
 		int prune_c = 0;
 		for (int i = 0; i < output_channels; i++) {
 			if (!valid_channels[i]) prune_c++;
@@ -164,4 +174,4 @@ bool EltwiseModule::CheckRedundantChannels(float c_threshold, float w_threshold)
 	return true;
 }
  
-
+  

@@ -95,3 +95,34 @@ bool SplitModule::ShortcutDelta(const CudaTensor& d, int group_id) {
 	if(group_id < 0 || group_id >= deltas.size() ) return false;
 	return deltas[group_id].Add(d); 
 }
+void SplitModule::SyncValidChannels(vector<bool>& vc, int s, int n, int g) {
+	if (n > output_channels) n = output_channels;
+	// always assume no prunning in split module
+	for (int i = 0; i < n; i++) {
+		vc[i + s] = true;
+	}
+
+	/*for (int i = g * output_channels, j = s; i < n; i++, j++) {
+		if (vc[j] != valid_channels[i]) {
+			vc[j] = false;
+			valid_channels[i] = false;
+		}
+	}*/
+}
+bool SplitModule::CheckRedundantChannels(float c_threshold, float w_threshold) {
+	// for the time being, disable prune for split module 
+	valid_channels.assign(output_channels, true);
+	for (int i = 0; i < prevs.size(); i++) {
+		if (prevs[i].group_id != -1) continue;
+		InferenceModule* m = prevs[i].module;
+		while (m) {
+			cout << " Reset " << m->name << " ...\n";
+			m->valid_channels.assign(m->valid_channels.size(), true);
+			if (dynamic_cast<ConvolutionalModule*>(m) || m->prevs.size() != 1) break;
+			m = m->prevs[0].module;
+		}
+		//TODO: complicated situations
+
+	}
+	return true;
+}
